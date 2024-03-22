@@ -10,8 +10,9 @@ DEFAULT_DEVICE = 'cpu'
 
 
 def forward_pass(model_lens: transformer_lens.HookedTransformer, t: str, layer: str) -> npt.NDArray[np.float64]:
-    o = model_lens.run_with_cache(t)
-    print(o)
+    o = model_lens.run_with_cache(t)[1]
+    o['hook_embed']
+    print(o['hook_embed'])
 
 
 def get_optimal_layer_kmeans(model_lens: transformer_lens.HookedTransformer, tokenizer, dataset, layer: str, N_CLUTERS_UPPERBOUND=1_000) -> List[npt.NDArray[np.float64]]:
