@@ -12,6 +12,7 @@ from sklearn.datasets import make_blobs
 from sklearn.metrics import silhouette_samples, silhouette_score
 import scipy
 import hashlib
+import networkx as nx
 
 
 DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -122,7 +123,7 @@ def get_optimal_layer_kmeans(model_lens: transformer_lens.HookedTransformer, dat
     return clusters
 
 
-def cluster_model_lattice(model_lens, layers_to_centroids: List[List[npt.NDArray[np.float64]]], distance_cutoff=float("inf")):
+def cluster_model_lattice(model_lens, layers_to_centroids: List[List[npt.NDArray[np.float64]]], similarity_cutoff=float("-inf")):
     """
     We will take a bit of a short cut here. Rather than passing *representatives* from each centroid to find the "strength" on the following centroids,
     we will pass the *center* of each centroid to the next layer. This is a simplification, but it should be a good starting point and quite a bit faster.
@@ -151,7 +152,7 @@ def cluster_model_lattice(model_lens, layers_to_centroids: List[List[npt.NDArray
         layer_cs = []
         for _, cluster in enumerate(layers_to_centroids[layer]):
             scores_to_next = score_cluster_to_next(
-                cluster, layers_to_centroids[layer + 1], layer + 1, distance_cutoff)
+                cluster, layers_to_centroids[layer + 1], layer + 1, similarity_cutoff)
             layer_cs.append(scores_to_next)
         cluster_scores.append(layer_cs)
 
@@ -171,7 +172,6 @@ def find_max_flow(cluster_scores: List[List[npt.NDArray]]):
     n_clusters = sum([len(cs) for cs in cluster_scores])
     print(f"We have {n_clusters} clusters")
     csgraph = np.zeros((n_clusters + 2, n_clusters + 2), dtype=int)
-    csr_matrix = np.zeros((n_clusters, n_clusters), dtype=int)
 
     last_layer_start_idx = -1
     for layer in range(len(cluster_scores) - 1):
@@ -182,27 +182,45 @@ def find_max_flow(cluster_scores: List[List[npt.NDArray]]):
         for _, node_cs in enumerate(cluster_scores[layer]):
             for j, c in enumerate(node_cs):
                 next_idx = layer_start_idx + n_in_layer + j
-                csgraph[node_idx, next_idx] = c
+                # TODO: ROUNDING ISSUES?!!?
+                csgraph[node_idx, next_idx] = round(c)
             node_idx += 1
 
     sink = n_clusters
 
-    print(source, sink, last_layer_start_idx,
-          n_clusters, [len(cs) for cs in cluster_scores])
+    TO_NEXT_VAL = 0.1
     for i, _ in enumerate(cluster_scores[0]):
         # Set source to first layer
-        csgraph[source, i + 1] = 1
+        csgraph[source, i + 1] = 0.1
     for i in range(len(cluster_scores[-1])):
-        csgraph[sink, last_layer_start_idx + i] = 1
+        csgraph[last_layer_start_idx + i, sink] = 1
 
     csrgraph = scipy.sparse.csr_matrix(csgraph)   
+    G = nx.DiGraph()
+    for i in range(num_nodes):
+        for j in csr.indices[csr.indptr[i]:csr.indptr[i + 1]]:
+            G.add_edge(i, j, weight=csr[i, j])
+
+    # Since NetworkX finds the shortest path, negate the weights to find the maximum weight path
+    for u, v, d in G.edges(data=True):
+        d['weight'] = -d['weight']
+
+    # Use Dijkstra's algorithm to find the shortest path in the modified graph
+    length, path = nx.single_source_dijkstra(G, source=1, target=3, weight='weight')
+
+    # Convert back to maximum weight and the corresponding path
+    max_weight = -length
+    return max_weight, G
+
+
+
 
     # TODO: add source and sink connections
     # TODO: to CSR matrix
 
     res = scipy.sparse.csgraph.maximum_flow(csrgraph, source, sink)
     print(res)
-    return res
+    return res, csgraph
 
 
 def get_transformer(name: str, device=DEFAULT_DEVICE):
