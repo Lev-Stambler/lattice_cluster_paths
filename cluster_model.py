@@ -188,25 +188,28 @@ def find_max_flow(cluster_scores: List[List[npt.NDArray]]):
 
     sink = n_clusters
 
-    TO_NEXT_VAL = 0.1
     for i, _ in enumerate(cluster_scores[0]):
         # Set source to first layer
-        csgraph[source, i + 1] = 0.1
+        csgraph[source, i + 1] = 1
     for i in range(len(cluster_scores[-1])):
         csgraph[last_layer_start_idx + i, sink] = 1
 
-    csrgraph = scipy.sparse.csr_matrix(csgraph)   
     G = nx.DiGraph()
-    for i in range(num_nodes):
-        for j in csr.indices[csr.indptr[i]:csr.indptr[i + 1]]:
-            G.add_edge(i, j, weight=csr[i, j])
+    for i in range(csgraph.shape[0]):
+        for j in range(csgraph.shape[1]):
+            if csgraph[i, j] != 0:
+                G.add_edge(i, j, weight=csgraph[i, j])
 
     # Since NetworkX finds the shortest path, negate the weights to find the maximum weight path
     for u, v, d in G.edges(data=True):
         d['weight'] = -d['weight']
 
     # Use Dijkstra's algorithm to find the shortest path in the modified graph
-    length, path = nx.single_source_dijkstra(G, source=1, target=3, weight='weight')
+    length, path = nx.single_source_dijkstra(G, source=source, target=sink, weight='weight')
+    print(length, path)
+
+	# TODO: look at this for shortest paths and stuff
+    # https://networkx.org/documentation/stable/reference/algorithms/generated/networkx.algorithms.simple_paths.shortest_simple_paths.html# 
 
     # Convert back to maximum weight and the corresponding path
     max_weight = -length
