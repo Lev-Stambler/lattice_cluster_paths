@@ -11,6 +11,7 @@ from sklearn.cluster import MiniBatchKMeans
 from sklearn.datasets import make_blobs
 from sklearn.metrics import silhouette_samples, silhouette_score
 import scipy
+import hashlib
 
 
 DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -18,19 +19,30 @@ DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 N_DIMS = 512
 SEED = 69_420
 N_DATASIZE = 10_000
-N_CLUSTERS_MIN = 2 * N_DIMS
+N_CLUSTERS_MIN = int(0.5 * N_DIMS)
 N_CLUSTERS_MAX = 10 * N_DIMS
+# TODO: CHANGE BACK TO 6/ MAKE THIS A PARAM
+N_BLOCKS = 2
 
 DEBUG_N_DATASIZE = 100
 DEBUG_N_CLUSTERS_MIN = 20
 DEBUG_N_CLUSTERS_MAX = 200
+DEBUG_N_BLOCKS = 3
 DEBUG = True
 
 if DEBUG:
     N_DATASIZE = DEBUG_N_DATASIZE
     N_CLUSTERS_MIN = DEBUG_N_CLUSTERS_MIN
     N_CLUSTERS_MAX = DEBUG_N_CLUSTERS_MAX
+    N_BLOCKS = DEBUG_N_BLOCKS
 
+def create_param_tag():
+    m = hashlib.sha256()
+    m.update(f'{SEED}{N_DATASIZE}{N_CLUSTERS_MIN}{N_CLUSTERS_MAX}{N_BLOCKS}'.encode())
+    return m.hexdigest()[:32]
+
+def get_save_tag(prepend: str):
+    return f'metadata/{prepend}_{create_param_tag()}.pkl'
 
 def get_block_base_label(i): return f'blocks.{i}'
 
@@ -41,15 +53,20 @@ def get_block_out_label(i): return f'{get_block_base_label(i)}.hook_resid_post'
 def forward_on_block(model, block_idx: int, data: npt.NDArray):
     return model.blocks[block_idx].forward(data)
 
-
-def kmeans_silhouette_method(dataset, n_clusters_min=2 * N_DIMS, n_clusters_max=10 * N_DIMS, skip=30):
+def kmeans_silhouette_method(dataset, layer: int, n_clusters_min=N_CLUSTERS_MIN, n_clusters_max=N_CLUSTERS_MAX, skip=30):
     tests = range(n_clusters_min, n_clusters_max, skip)
     opt_sil = -1
     opt_clusters = None
 
+    cluster_name = get_save_tag(f'{layer}_clusters')
+    if os.path.exists(cluster_name):
+        print("Loading clusters from cache")
+        return pickle.load(open(cluster_name, 'rb'))
+
     # TODO: more like bin search
     for n_clusters in tests:
         print(f"Trying {n_clusters} clusters")
+        # TODO: would be nice to be a non-mini-batch
         clusterer = MiniBatchKMeans(n_clusters=n_clusters, random_state=SEED)
         cluster_labels = clusterer.fit_predict(dataset)
         silhouette_avg = silhouette_score(dataset, cluster_labels)
@@ -59,7 +76,9 @@ def kmeans_silhouette_method(dataset, n_clusters_min=2 * N_DIMS, n_clusters_max=
                 f"Found better silhouette score: {silhouette_avg} with {n_clusters} clusters")
             opt_sil = silhouette_avg
             opt_clusters = n_clusters
-    return opt_clusters, opt_sil
+
+    pickle.dump(opt_clusters, open(cluster_name, 'wb'))
+    return opt_clusters
 
 
 def forward_pass(model_lens: transformer_lens.HookedTransformer, t: str, layer: str) -> npt.NDArray[np.float64]:
@@ -68,14 +87,15 @@ def forward_pass(model_lens: transformer_lens.HookedTransformer, t: str, layer: 
     return o[layer]
 
 
-def get_optimal_layer_kmeans(model_lens: transformer_lens.HookedTransformer, tokenizer, dataset, layer: str) -> List[npt.NDArray[np.float64]]:
+def get_optimal_layer_kmeans(model_lens: transformer_lens.HookedTransformer, dataset, layer: str) -> List[npt.NDArray[np.float64]]:
     """
     For a specific layer, find the optimal number of clusters: TODO document some references for this is actually done
     Then, return the found centroids for each cluster
     """
     print(
         f"Finding optimal number of clusters and such clusters for layer {layer}")
-    ds_name = f'metadata/{layer}_dataset_embd__SEED_{SEED}__SIZE_{N_DATASIZE}.pkl'
+    # ds_name = f'metadata/{layer}_dataset_embd__SEED_{SEED}__SIZE_{N_DATASIZE}.pkl'
+    ds_name = get_save_tag(f'{layer}_dataset_embd')
 
     # TODO: DOES THIS WORK?
     if os.path.exists(ds_name):
@@ -87,7 +107,7 @@ def get_optimal_layer_kmeans(model_lens: transformer_lens.HookedTransformer, tok
             0).detach().cpu().numpy()) for t in dataset]
         dataset_np = [d for ds in dataset_np_non_flat for d in ds]
         pickle.dump(dataset_np, open(ds_name, 'wb'))
-    clusters, _ = kmeans_silhouette_method(dataset_np)
+    clusters = kmeans_silhouette_method(dataset_np, layer)
     return clusters
 
 
@@ -176,7 +196,6 @@ def get_dataset(name: str):
 def main():
     model_name = 'EleutherAI/pythia-70m'
     dataset_name = 'NeelNanda/pile-10k'
-    n_blocks = 6
     model, tokenizer = get_transformer(model_name)
 
     ds = get_dataset(dataset_name)
@@ -187,11 +206,10 @@ def main():
     # forward_pass(model, ds['train'][0]['text'], "")
 
     clusters = []
-    for i in range(n_blocks):
+    for i in range(N_BLOCKS):
         c = get_optimal_layer_kmeans(
-            model, tokenizer, ds, get_block_out_label(i))
+            model, ds, get_block_out_label(i))
         clusters.append(c)
-        return
 
     lattice = cluster_model_lattice(model, clusters)
     max_flow = find_max_flow(lattice)
