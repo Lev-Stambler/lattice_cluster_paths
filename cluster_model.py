@@ -30,7 +30,7 @@ DATASET_NAME = 'NeelNanda/pile-10k'
 
 DEBUG_N_DATASIZE = 100
 DEBUG_N_CLUSTERS_MIN = 60
-DEBUG_N_CLUSTERS_MAX = 100
+DEBUG_N_CLUSTERS_MAX = 70
 DEBUG_N_BLOCKS = 3
 DEBUG = True
 
@@ -40,13 +40,17 @@ if DEBUG:
     N_CLUSTERS_MAX = DEBUG_N_CLUSTERS_MAX
     N_BLOCKS = DEBUG_N_BLOCKS
 
+
 def create_param_tag():
     m = hashlib.sha256()
-    m.update(f'{MODEL_NAME}{DATASET_NAME}{SEED}{N_DATASIZE}{N_CLUSTERS_MIN}{N_CLUSTERS_MAX}{N_BLOCKS}'.encode())
+    m.update(
+        f'{MODEL_NAME}{DATASET_NAME}{SEED}{N_DATASIZE}{N_CLUSTERS_MIN}{N_CLUSTERS_MAX}{N_BLOCKS}'.encode())
     return m.hexdigest()[:32]
+
 
 def get_save_tag(prepend: str):
     return f'metadata/{prepend}_{create_param_tag()}.pkl'
+
 
 def get_block_base_label(i): return f'blocks.{i}'
 
@@ -55,7 +59,10 @@ def get_block_out_label(i): return f'{get_block_base_label(i)}.hook_resid_post'
 
 
 def forward_on_block(model, block_idx: int, data: npt.NDArray):
-    return model.blocks[block_idx].forward(data)
+    ret = model.blocks[block_idx](torch.tensor(list(data)).unsqueeze(
+        0).unsqueeze(0).to(device=DEFAULT_DEVICE)).detach().cpu().numpy()
+    return ret[0][0]
+
 
 def kmeans_silhouette_method(dataset, layer: int, n_clusters_min=N_CLUSTERS_MIN, n_clusters_max=N_CLUSTERS_MAX, skip=30):
     tests = range(n_clusters_min, n_clusters_max, skip)
@@ -123,7 +130,7 @@ def cluster_model_lattice(model_lens, layers_to_centroids: List[List[npt.NDArray
     distance_cutoff: If the distance between two centroids is greater than this, we will not consider them to be connected.
     """
 
-    def score_cluster_to_next(cluster, next_clusters: npt.NDArray, block_idx: int, metric_cutoff: float = None) -> List[float]:
+    def score_cluster_to_next(cluster, next_clusters: npt.NDArray, next_block_idx: int, metric_cutoff: float = None) -> List[float]:
         """
         Score the cluster to the next clusters.
         Set any score to 0 if the distance between the two centroids is greater than the distance_cutoff
@@ -131,11 +138,12 @@ def cluster_model_lattice(model_lens, layers_to_centroids: List[List[npt.NDArray
         # TODO: DIFFERENT METRICS???
         # TODO: USING INNER PRODUCT RN
         """
-        next_block_ret = forward_on_block(model_lens, block_idx, cluster)
+        next_block_ret = forward_on_block(model_lens, next_block_idx, cluster)
         inner_prods = [np.inner(next_block_ret, c) for c in next_clusters]
         if metric_cutoff:
             # TODO: SHOULD THESE BE NORMED FOR COS SIM?
-            inner_prods = [ip if ip >= metric_cutoff else 0 for ip in inner_prods]
+            inner_prods = [ip if ip >=
+                           metric_cutoff else 0 for ip in inner_prods]
         return inner_prods
 
     cluster_scores = []
@@ -143,43 +151,58 @@ def cluster_model_lattice(model_lens, layers_to_centroids: List[List[npt.NDArray
         layer_cs = []
         for _, cluster in enumerate(layers_to_centroids[layer]):
             scores_to_next = score_cluster_to_next(
-                cluster, layers_to_centroids[layer + 1], distance_cutoff)
+                cluster, layers_to_centroids[layer + 1], layer + 1, distance_cutoff)
             layer_cs.append(scores_to_next)
         cluster_scores.append(layer_cs)
 
     return cluster_scores
 
 
-def find_max_flow(cluster_scores: List[List[List[float]]]):
+def find_max_flow(cluster_scores: List[List[npt.NDArray]]):
     """
     Find the maximum flow through the lattice
 
     https://www.usenix.org/conference/atc18/presentation/gong We can find the top K max flows with the "Heavy Keeper" Algorithm
     """
-    csgraph = np.array()
     node_idx = 0
 
     source = 0
     node_idx += 1
-    n_clusters = sum([sum(len(cs) for cs in layer)
-                     for layer in cluster_scores])
+    n_clusters = sum([len(cs) for cs in cluster_scores])
+    print(f"We have {n_clusters} clusters")
+    csgraph = np.zeros((n_clusters + 2, n_clusters + 2), dtype=int)
     csr_matrix = np.zeros((n_clusters, n_clusters), dtype=int)
 
-    for layer in range(len(cluster_scores), - 1):
+    last_layer_start_idx = -1
+    for layer in range(len(cluster_scores) - 1):
         layer_start_idx = node_idx
         n_in_layer = len(cluster_scores[layer])
+        if layer == len(cluster_scores) - 2:
+            last_layer_start_idx = layer_start_idx + n_in_layer
         for _, node_cs in enumerate(cluster_scores[layer]):
             for j, c in enumerate(node_cs):
                 next_idx = layer_start_idx + n_in_layer + j
                 csgraph[node_idx, next_idx] = c
             node_idx += 1
 
-    sink_idx = node_idx
+    sink = n_clusters
+
+    print(source, sink, last_layer_start_idx,
+          n_clusters, [len(cs) for cs in cluster_scores])
+    for i, _ in enumerate(cluster_scores[0]):
+        # Set source to first layer
+        csgraph[source, i + 1] = 1
+    for i in range(len(cluster_scores[-1])):
+        csgraph[sink, last_layer_start_idx + i] = 1
+
+    csrgraph = scipy.sparse.csr_matrix(csgraph)   
+
     # TODO: add source and sink connections
     # TODO: to CSR matrix
 
-    scipy.sparse.csgraph.maximum_flow(csgraph, source, sink)
-    pass
+    res = scipy.sparse.csgraph.maximum_flow(csrgraph, source, sink)
+    print(res)
+    return res
 
 
 def get_transformer(name: str, device=DEFAULT_DEVICE):
