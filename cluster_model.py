@@ -24,9 +24,13 @@ N_CLUSTERS_MAX = 10 * N_DIMS
 # TODO: CHANGE BACK TO 6/ MAKE THIS A PARAM
 N_BLOCKS = 2
 
+# TODO: into params for save
+MODEL_NAME = 'EleutherAI/pythia-70m'
+DATASET_NAME = 'NeelNanda/pile-10k'
+
 DEBUG_N_DATASIZE = 100
 DEBUG_N_CLUSTERS_MIN = 20
-DEBUG_N_CLUSTERS_MAX = 200
+DEBUG_N_CLUSTERS_MAX = 100
 DEBUG_N_BLOCKS = 3
 DEBUG = True
 
@@ -38,7 +42,7 @@ if DEBUG:
 
 def create_param_tag():
     m = hashlib.sha256()
-    m.update(f'{SEED}{N_DATASIZE}{N_CLUSTERS_MIN}{N_CLUSTERS_MAX}{N_BLOCKS}'.encode())
+    m.update(f'{MODEL_NAME}{DATASET_NAME}{SEED}{N_DATASIZE}{N_CLUSTERS_MIN}{N_CLUSTERS_MAX}{N_BLOCKS}'.encode())
     return m.hexdigest()[:32]
 
 def get_save_tag(prepend: str):
@@ -60,7 +64,7 @@ def kmeans_silhouette_method(dataset, layer: int, n_clusters_min=N_CLUSTERS_MIN,
 
     cluster_name = get_save_tag(f'{layer}_clusters')
     if os.path.exists(cluster_name):
-        print("Loading clusters from cache")
+        print("Loading KMeans clusters from cache")
         return pickle.load(open(cluster_name, 'rb'))
 
     # TODO: more like bin search
@@ -75,7 +79,7 @@ def kmeans_silhouette_method(dataset, layer: int, n_clusters_min=N_CLUSTERS_MIN,
             print(
                 f"Found better silhouette score: {silhouette_avg} with {n_clusters} clusters")
             opt_sil = silhouette_avg
-            opt_clusters = n_clusters
+            opt_clusters = cluster_labels
 
     pickle.dump(opt_clusters, open(cluster_name, 'wb'))
     return opt_clusters
@@ -130,12 +134,14 @@ def cluster_model_lattice(model_lens, layers_to_centroids: List[List[npt.NDArray
         next_block_ret = forward_on_block(model_lens, block_idx, cluster)
         inner_prods = [np.inner(next_block_ret, c) for c in next_clusters]
         if metric_cutoff:
+            # TODO: SHOULD THESE BE NORMED FOR COS SIM?
             inner_prods = [ip if ip >= metric_cutoff else 0 for ip in inner_prods]
         return inner_prods
 
     cluster_scores = []
     for layer in range(len(layers_to_centroids) - 1):
         layer_cs = []
+        print(layers_to_centroids[layer])
         for _, cluster in enumerate(layers_to_centroids[layer]):
             scores_to_next = score_cluster_to_next(
                 cluster, layers_to_centroids[layer + 1], distance_cutoff)
@@ -194,11 +200,9 @@ def get_dataset(name: str):
 
 
 def main():
-    model_name = 'EleutherAI/pythia-70m'
-    dataset_name = 'NeelNanda/pile-10k'
-    model, tokenizer = get_transformer(model_name)
+    model, tokenizer = get_transformer(MODEL_NAME)
 
-    ds = get_dataset(dataset_name)
+    ds = get_dataset(DATASET_NAME)
     # TODO: we will have to do more than th
     shuffled = ds.shuffle(seed=SEED)['train'][:N_DATASIZE]['text']
     ds = shuffled
@@ -209,6 +213,7 @@ def main():
     for i in range(N_BLOCKS):
         c = get_optimal_layer_kmeans(
             model, ds, get_block_out_label(i))
+        print(c)
         clusters.append(c)
 
     lattice = cluster_model_lattice(model, clusters)
