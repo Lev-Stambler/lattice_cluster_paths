@@ -13,12 +13,34 @@ from sklearn.metrics import silhouette_samples, silhouette_score
 import scipy
 
 
-DEFAULT_DEVICE = 'cpu'
+DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 # TODO: not global var
 N_DIMS = 512
 SEED = 69_420
 N_DATASIZE = 10_000
-N_DATASIZE = 100
+N_CLUSTERS_MIN = 2 * N_DIMS
+N_CLUSTERS_MAX = 10 * N_DIMS
+
+DEBUG_N_DATASIZE = 100
+DEBUG_N_CLUSTERS_MIN = 20
+DEBUG_N_CLUSTERS_MAX = 200
+DEBUG = True
+
+if DEBUG:
+    N_DATASIZE = DEBUG_N_DATASIZE
+    N_CLUSTERS_MIN = DEBUG_N_CLUSTERS_MIN
+    N_CLUSTERS_MAX = DEBUG_N_CLUSTERS_MAX
+
+
+def get_block_base_label(i): return f'blocks.{i}'
+
+
+def get_block_out_label(i): return f'{get_block_base_label(i)}.hook_resid_post'
+
+
+def forward_on_block(model, block_idx: int, data: npt.NDArray):
+    return model.blocks[block_idx].forward(data)
+
 
 def kmeans_silhouette_method(dataset, n_clusters_min=2 * N_DIMS, n_clusters_max=10 * N_DIMS, skip=30):
     tests = range(n_clusters_min, n_clusters_max, skip)
@@ -41,8 +63,10 @@ def kmeans_silhouette_method(dataset, n_clusters_min=2 * N_DIMS, n_clusters_max=
 
 
 def forward_pass(model_lens: transformer_lens.HookedTransformer, t: str, layer: str) -> npt.NDArray[np.float64]:
-    o = model_lens.run_with_cache(t)[1]
+    with torch.no_grad():
+        o = model_lens.run_with_cache(t)[1]
     return o[layer]
+
 
 def get_optimal_layer_kmeans(model_lens: transformer_lens.HookedTransformer, tokenizer, dataset, layer: str) -> List[npt.NDArray[np.float64]]:
     """
@@ -51,13 +75,17 @@ def get_optimal_layer_kmeans(model_lens: transformer_lens.HookedTransformer, tok
     """
     print(
         f"Finding optimal number of clusters and such clusters for layer {layer}")
-    ds_name = f'{layer}_dataset_embd__SEED_{SEED}__SIZE_{N_DATASIZE}.pkl'
+    ds_name = f'metadata/{layer}_dataset_embd__SEED_{SEED}__SIZE_{N_DATASIZE}.pkl'
 
     # TODO: DOES THIS WORK?
     if os.path.exists(ds_name):
+        print("Loading dataset from cache")
         dataset_np = pickle.load(open(ds_name, 'rb'))
     else:
-        dataset_np = [forward_pass(model_lens, t, layer) for t in dataset]
+        # TODO: think about this in terms of flattening the dataset
+        dataset_np_non_flat = [list(forward_pass(model_lens, t, layer).squeeze(
+            0).detach().cpu().numpy()) for t in dataset]
+        dataset_np = [d for ds in dataset_np_non_flat for d in ds]
         pickle.dump(dataset_np, open(ds_name, 'wb'))
     clusters, _ = kmeans_silhouette_method(dataset_np)
     return clusters
@@ -70,26 +98,32 @@ def cluster_model_lattice(model_lens, layers_to_centroids: List[List[npt.NDArray
 
     distance_cutoff: If the distance between two centroids is greater than this, we will not consider them to be connected.
     """
-    
-    def score_cluster_to_next(cluster, next_clusters, distance_cutoff) -> List[float]:
+
+    def score_cluster_to_next(cluster, next_clusters: npt.NDArray, block_idx: int, metric_cutoff: float = None) -> List[float]:
         """
         Score the cluster to the next clusters.
         Set any score to 0 if the distance between the two centroids is greater than the distance_cutoff
-        
+
         # TODO: DIFFERENT METRICS???
+        # TODO: USING INNER PRODUCT RN
         """
-        raise NotImplementedError
-        pass
+        next_block_ret = forward_on_block(model_lens, block_idx, cluster)
+        inner_prods = [np.inner(next_block_ret, c) for c in next_clusters]
+        if metric_cutoff:
+            inner_prods = [ip if ip >= metric_cutoff else 0 for ip in inner_prods]
+        return inner_prods
 
     cluster_scores = []
     for layer in range(len(layers_to_centroids) - 1):
         layer_cs = []
         for _, cluster in enumerate(layers_to_centroids[layer]):
-            scores_to_next = score_cluster_to_next(cluster, layers_to_centroids[layer + 1], distance_cutoff)
+            scores_to_next = score_cluster_to_next(
+                cluster, layers_to_centroids[layer + 1], distance_cutoff)
             layer_cs.append(scores_to_next)
         cluster_scores.append(layer_cs)
 
     return cluster_scores
+
 
 def find_max_flow(cluster_scores: List[List[List[float]]]):
     """
@@ -102,10 +136,9 @@ def find_max_flow(cluster_scores: List[List[List[float]]]):
 
     source = 0
     node_idx += 1
-    n_clusters = sum([sum(len(cs) for cs in layer) for layer in cluster_scores])
+    n_clusters = sum([sum(len(cs) for cs in layer)
+                     for layer in cluster_scores])
     csr_matrix = np.zeros((n_clusters, n_clusters), dtype=int)
-
-    
 
     for layer in range(len(cluster_scores), - 1):
         layer_start_idx = node_idx
@@ -144,7 +177,6 @@ def main():
     model_name = 'EleutherAI/pythia-70m'
     dataset_name = 'NeelNanda/pile-10k'
     n_blocks = 6
-    def get_block_label(i): return f'blocks.{i}.hook_resid_post'
     model, tokenizer = get_transformer(model_name)
 
     ds = get_dataset(dataset_name)
@@ -156,15 +188,12 @@ def main():
 
     clusters = []
     for i in range(n_blocks):
-        c = get_optimal_layer_kmeans(model, tokenizer, ds, get_block_label(i))
+        c = get_optimal_layer_kmeans(
+            model, tokenizer, ds, get_block_out_label(i))
         clusters.append(c)
         return
 
-    layers_to_centroids = []
-    for layer in model_lens.layers:
-        centroids = get_optimal_layer_kmeans(model, tokenizer, dataset, layer)
-        layers_to_centroids.append(centroids)
-    lattice = cluster_model_lattice(model, layers_to_centroids)
+    lattice = cluster_model_lattice(model, clusters)
     max_flow = find_max_flow(lattice)
     return max_flow
 
