@@ -29,7 +29,7 @@ MODEL_NAME = 'EleutherAI/pythia-70m'
 DATASET_NAME = 'NeelNanda/pile-10k'
 
 DEBUG_N_DATASIZE = 100
-DEBUG_N_CLUSTERS_MIN = 20
+DEBUG_N_CLUSTERS_MIN = 60
 DEBUG_N_CLUSTERS_MAX = 100
 DEBUG_N_BLOCKS = 3
 DEBUG = True
@@ -79,7 +79,7 @@ def kmeans_silhouette_method(dataset, layer: int, n_clusters_min=N_CLUSTERS_MIN,
             print(
                 f"Found better silhouette score: {silhouette_avg} with {n_clusters} clusters")
             opt_sil = silhouette_avg
-            opt_clusters = cluster_labels
+            opt_clusters = clusterer.cluster_centers_
 
     pickle.dump(opt_clusters, open(cluster_name, 'wb'))
     return opt_clusters
@@ -141,7 +141,6 @@ def cluster_model_lattice(model_lens, layers_to_centroids: List[List[npt.NDArray
     cluster_scores = []
     for layer in range(len(layers_to_centroids) - 1):
         layer_cs = []
-        print(layers_to_centroids[layer])
         for _, cluster in enumerate(layers_to_centroids[layer]):
             scores_to_next = score_cluster_to_next(
                 cluster, layers_to_centroids[layer + 1], distance_cutoff)
@@ -213,7 +212,6 @@ def main():
     for i in range(N_BLOCKS):
         c = get_optimal_layer_kmeans(
             model, ds, get_block_out_label(i))
-        print(c)
         clusters.append(c)
 
     lattice = cluster_model_lattice(model, clusters)
