@@ -249,7 +249,7 @@ def find_highest_token_per_path(token_to_original_ds: List[int], token_to_pos_or
         score = 0
         for layer in range(len(path)):
             similarity_metric = np.inner(
-                tok[layer], clusters[layer][path[layer] - 60 * layer])  # TODO: SUPER SUPER GETHOT
+                tok[layer], clusters[layer][path[layer] - N_CLUSTERS_MIN * layer])  # TODO: SUPER SUPER GETHOT
             # TODO: THIS SHOULD NOT BE A SUM
             score += similarity_metric * score_weighting_per_layer[layer]
         scores[i] = score
