@@ -13,6 +13,7 @@ from sklearn.metrics import silhouette_samples, silhouette_score
 import scipy
 import hashlib
 import networkx as nx
+import utils
 
 
 DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -32,6 +33,10 @@ DATASET_NAME = 'NeelNanda/pile-10k'
 DEBUG_N_DATASIZE = 100
 DEBUG_N_CLUSTERS_MIN = 60
 DEBUG_N_CLUSTERS_MAX = 70
+
+#DEBUG_N_CLUSTERS_MIN = 10
+#DEBUG_N_CLUSTERS_MAX = 20
+
 DEBUG_N_BLOCKS = 3
 DEBUG = True
 
@@ -65,7 +70,7 @@ def forward_on_block(model, block_idx: int, data: npt.NDArray):
     return ret[0][0]
 
 
-def kmeans_silhouette_method(dataset, layer: int, n_clusters_min=N_CLUSTERS_MIN, n_clusters_max=N_CLUSTERS_MAX, skip=30):
+def kmeans_silhouette_method(dataset: npt.NDArray, layer: int, n_clusters_min=N_CLUSTERS_MIN, n_clusters_max=N_CLUSTERS_MAX, skip=30):
     tests = range(n_clusters_min, n_clusters_max, skip)
     opt_sil = -1
     opt_clusters = None
@@ -159,72 +164,66 @@ def cluster_model_lattice(model_lens, layers_to_centroids: List[List[npt.NDArray
     return cluster_scores
 
 
-def find_max_flow(cluster_scores: List[List[npt.NDArray]]):
-    """
-    Find the maximum flow through the lattice
-
-    https://www.usenix.org/conference/atc18/presentation/gong We can find the top K max flows with the "Heavy Keeper" Algorithm
-    """
+def to_nx_graph(cluster_scores: List[List[npt.NDArray]], cutoff=0.1) -> nx.DiGraph:
+    SCALING_RESOLUTION = 1000
     node_idx = 0
-
     source = 0
     node_idx += 1
     n_clusters = sum([len(cs) for cs in cluster_scores])
+    eps = 1e-6
+    most_neg_abs = abs(min([min([min(c) for c in cs]) for cs in cluster_scores])) + eps
+
     print(f"We have {n_clusters} clusters")
     csgraph = np.zeros((n_clusters + 2, n_clusters + 2), dtype=int)
 
+    G = nx.DiGraph()
     last_layer_start_idx = -1
     for layer in range(len(cluster_scores) - 1):
         layer_start_idx = node_idx
         n_in_layer = len(cluster_scores[layer])
         if layer == len(cluster_scores) - 2:
-            last_layer_start_idx = layer_start_idx + n_in_layer
+            last_layer_start_idx = layer_start_idx + n_in_layer - 1
         for _, node_cs in enumerate(cluster_scores[layer]):
             for j, c in enumerate(node_cs):
                 next_idx = layer_start_idx + n_in_layer + j
                 # TODO: ROUNDING ISSUES?!!?
-                csgraph[node_idx, next_idx] = round(c)
+                # csgraph[node_idx, next_idx] = round(c)
+                w = round((c + most_neg_abs) * SCALING_RESOLUTION)
+                # print("AAA", w, node_idx, next_idx)
+                G.add_edge(node_idx, next_idx, weight=w)
             node_idx += 1
 
+    print("AAA", last_layer_start_idx, len(cluster_scores[-1]), n_clusters)
     sink = n_clusters
 
     for i, _ in enumerate(cluster_scores[0]):
         # Set source to first layer
-        csgraph[source, i + 1] = 1
+        G.add_edge(source, i + 1, weight=1)
     for i in range(len(cluster_scores[-1])):
-        csgraph[last_layer_start_idx + i, sink] = 1
+        G.add_edge(last_layer_start_idx + i, sink, weight=1)
+        # csgraph[last_layer_start_idx + i, sink] = 1
 
-    G = nx.DiGraph()
-    for i in range(csgraph.shape[0]):
-        for j in range(csgraph.shape[1]):
-            if csgraph[i, j] != 0:
-                G.add_edge(i, j, weight=csgraph[i, j])
+    # for i in range(csgraph.shape[0]):
+    #     for j in range(csgraph.shape[1]):
+    #         if csgraph[i, j] + most_neg_abs > cutoff:
+    #             G.add_edge(i, j, weight=csgraph[i, j] + most_neg_abs) # Ensure all weights are positive
+    #         if csgraph[i, j] < 0:
+    #             print(f"Negative weight: {csgraph[i, j]}")
 
-    # Since NetworkX finds the shortest path, negate the weights to find the maximum weight path
-    for u, v, d in G.edges(data=True):
-        d['weight'] = -d['weight']
-
-    # Use Dijkstra's algorithm to find the shortest path in the modified graph
-    length, path = nx.single_source_dijkstra(G, source=source, target=sink, weight='weight')
-    print(length, path)
-
-	# TODO: look at this for shortest paths and stuff
-    # https://networkx.org/documentation/stable/reference/algorithms/generated/networkx.algorithms.simple_paths.shortest_simple_paths.html# 
-
-    # Convert back to maximum weight and the corresponding path
-    max_weight = -length
-    return max_weight, G
+    return G, source, sink
 
 
+def find_max_weight(cluster_scores: List[List[npt.NDArray]], K=100):
+    """
+    Find the maximum flow through the lattice
 
-
-    # TODO: add source and sink connections
-    # TODO: to CSR matrix
-
-    res = scipy.sparse.csgraph.maximum_flow(csrgraph, source, sink)
-    print(res)
-    return res, csgraph
-
+    https://www.usenix.org/conference/atc18/presentation/gong We can find the top K max flows with the "Heavy Keeper" Algorithm
+    """
+    G, source, sink = to_nx_graph(cluster_scores)
+    paths = utils.top_k_paths_to_end(G, source, sink, K)
+    # paths = utils.find_top_k_paths(G, source, sink, K)
+    print(paths)
+    return None, G
 
 def get_transformer(name: str, device=DEFAULT_DEVICE):
     """
@@ -259,7 +258,7 @@ def main():
         clusters.append(c)
 
     lattice = cluster_model_lattice(model, clusters)
-    max_flow = find_max_flow(lattice)
+    max_flow = find_max_weight(lattice)
     return max_flow
 
 
