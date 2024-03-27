@@ -179,9 +179,9 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixtur
         print("Loading cluster scores from cache")
         return pickle.load(open(save_name, 'rb'))
 
+    print("Getting cluster scores for lattice")
     # We want to have the outer index be the token, the inner index be the layer
     ds = ds.swapaxes(0, 1)
-
 
     def score_cluster_to_next(curr_layer_idx: int, next_layer_idx: int, metric_cutoff: float = None) -> List[float]:
         """
