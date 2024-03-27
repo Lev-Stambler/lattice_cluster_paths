@@ -182,7 +182,7 @@ def to_nx_graph(cluster_scores: List[List[npt.NDArray]]) -> nx.DiGraph:
     node_idx = 0
     source = 0
     node_idx += 1
-    n_clusters = sum([len(cs) for cs in cluster_scores])
+    n_clusters = sum([len(cs) for cs in cluster_scores]) + len(cluster_scores[-1][0]) # We need to account for all outgoing from the end
     eps = 1e-6
     most_neg = (min([min([min(c) for c in cs])
                 for cs in cluster_scores])) + eps
@@ -193,10 +193,10 @@ def to_nx_graph(cluster_scores: List[List[npt.NDArray]]) -> nx.DiGraph:
 
     G = nx.DiGraph()
     last_layer_start_idx = -1
-    for layer in range(len(cluster_scores) - 1):
+    for layer in range(len(cluster_scores)):
         layer_start_idx = node_idx
         n_in_layer = len(cluster_scores[layer])
-        if layer == len(cluster_scores) - 2:
+        if layer == len(cluster_scores) - 1:
             last_layer_start_idx = layer_start_idx + n_in_layer - 1
         for _, node_cs in enumerate(cluster_scores[layer]):
             for j, c in enumerate(node_cs):
@@ -217,8 +217,8 @@ def to_nx_graph(cluster_scores: List[List[npt.NDArray]]) -> nx.DiGraph:
     for i in range(len(cluster_scores[-1])):
         G.add_edge(last_layer_start_idx + i, sink, weight=1)
 
-    nx.draw(G, with_labels=True, pos=nx.nx_pydot.graphviz_layout(G, prog='dot'))
-    plt.savefig("graph.png")
+    # nx.draw(G, with_labels=True, pos=nx.nx_pydot.graphviz_layout(G, prog='dot'))
+    # plt.savefig("graph.png")
     return G, source, sink
 
 
@@ -232,6 +232,7 @@ def find_highest_token_per_path(token_to_original_ds: List[int], token_to_pos_or
     # Set the outer index to the token
     token_per_layer = embd_dataset.swapaxes(0, 1)
     scores = np.zeros(len(token_per_layer))
+    print(token_per_layer.shape, path)
     assert token_per_layer.shape[1] == len(path)
 
     for i, tok in enumerate(token_per_layer):
@@ -307,7 +308,7 @@ def main():
     token_to_pos_original_ds = []
 
     for i, d in enumerate(ds):
-        tokenized = tokenizer(d['text'], return_tensors='pt')
+        tokenized = tokenizer(d, return_tensors='pt')
         for j in range(len(tokenized['input_ids'])):
             token_to_original_ds.append(i)
             token_to_pos_original_ds.append(j)
@@ -316,7 +317,7 @@ def main():
     find_highest_token_per_path(
         token_to_pos_original_ds=token_to_pos_original_ds,
         token_to_original_ds=token_to_original_ds,
-        embd_dataset=ds_emb, path=[15, 75],
+        embd_dataset=ds_emb, path=[15, 75, 123],
         clusters=clusters, score_weighting_per_layer=np.array([1, 1]), top_n=20)
     return max_flow
 
