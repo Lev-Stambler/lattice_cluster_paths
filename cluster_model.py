@@ -31,9 +31,9 @@ N_TOKENS_CUTOFF = 100
 MODEL_NAME = 'EleutherAI/pythia-70m'
 DATASET_NAME = 'NeelNanda/pile-10k'
 
-DEBUG_N_DATASIZE = 45
-DEBUG_N_CLUSTERS_MIN = 10
-DEBUG_N_CLUSTERS_MAX = 20
+DEBUG_N_DATASIZE = 2_000
+DEBUG_N_CLUSTERS_MIN = 300
+DEBUG_N_CLUSTERS_MAX = 300
 
 # DEBUG_N_CLUSTERS_MIN = 10
 # DEBUG_N_CLUSTERS_MAX = 20
@@ -106,14 +106,6 @@ def kmeans_silhouette_method(dataset: npt.NDArray, layer: int, n_clusters_min=N_
 def forward_pass(model_lens: transformer_lens.HookedTransformer, t: str, layer: str) -> npt.NDArray[np.float64]:
     with torch.no_grad():
         return model_lens.run_with_cache(t)[1][layer]
-    #     toks = model_lens.tokenizer(t, return_tensors='pt')
-    #     print(toks)
-    #     o = model_lens.run_with_cache(
-    #         input_ids=toks['input_ids'][:N_TOKENS_CUTOFF],
-    #         attention_mask=toks['attention_mask'][:N_TOKENS_CUTOFF],
-    #     )[1]
-    # return o[layer]
-
 
 def get_per_layer_emb_dataset(model_lens: transformer_lens.HookedTransformer, dataset: Dataset, layers: List[str]) -> List[npt.NDArray[np.float64]]:
     layers_out = []
@@ -249,8 +241,8 @@ def find_highest_token_per_path(token_to_original_ds: List[int], token_to_pos_or
         score = 0
         for layer in range(len(path)):
             similarity_metric = np.inner(
-                tok[layer], clusters[layer][path[layer] - N_CLUSTERS_MIN * layer])  # TODO: SUPER SUPER GETHOT
-            # TODO: THIS SHOULD NOT BE A SUM
+                # TODO: we want to use a map from vertex to cluster
+                tok[layer], clusters[layer][path[layer] - N_CLUSTERS_MIN * layer - 1])  # TODO: SUPER SUPER GETHOT
             score += similarity_metric * score_weighting_per_layer[layer]
         scores[i] = score
 
@@ -258,7 +250,6 @@ def find_highest_token_per_path(token_to_original_ds: List[int], token_to_pos_or
     top = []
     for i in range(top_n):
         idx = sorted_scores[i]
-        print("IIII", idx)
         top.append(
             (token_to_original_ds[idx], token_to_pos_original_ds[idx], scores[idx]))
     return top
@@ -330,12 +321,13 @@ def main():
     assert len(token_to_original_ds) == len(
         token_to_pos_original_ds) == ds_emb.shape[1]
 
-    find_highest_token_per_path(
+    highest = find_highest_token_per_path(
         token_to_pos_original_ds=token_to_pos_original_ds,
         token_to_original_ds=token_to_original_ds,
-        embd_dataset=ds_emb, path=[15, 75, 123],
+        embd_dataset=ds_emb, path=[10, 15, 30],
         clusters=clusters, score_weighting_per_layer=np.array([1, 1, 1]), top_n=20)
-    return max_flow
+    print(highest)
+    return max_flow, highest
 
 
 if __name__ == '__main__':
