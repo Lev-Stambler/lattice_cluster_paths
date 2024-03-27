@@ -253,7 +253,7 @@ def main():
             model, ds, get_block_out_label(i))
         clusters.append(c)
 
-    lattice = cluster_model_lattice(model, clusters, similarity_cutoff=2)
+    lattice = cluster_model_lattice(model, clusters, similarity_cutoff=5)
     max_flow = find_max_weight(lattice)
     return max_flow
 
