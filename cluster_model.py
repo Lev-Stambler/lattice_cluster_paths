@@ -35,8 +35,8 @@ DEBUG_N_DATASIZE = 100
 DEBUG_N_CLUSTERS_MIN = 60
 DEBUG_N_CLUSTERS_MAX = 70
 
-#DEBUG_N_CLUSTERS_MIN = 10
-#DEBUG_N_CLUSTERS_MAX = 20
+# DEBUG_N_CLUSTERS_MIN = 10
+# DEBUG_N_CLUSTERS_MAX = 20
 
 DEBUG_N_BLOCKS = 3
 DEBUG = True
@@ -53,6 +53,10 @@ def create_param_tag():
     m.update(
         f'{MODEL_NAME}{DATASET_NAME}{SEED}{N_DATASIZE}{N_CLUSTERS_MIN}{N_CLUSTERS_MAX}{N_BLOCKS}'.encode())
     return m.hexdigest()[:32]
+
+
+def similarity_metric(a, b):
+    return np.inner(a, b)
 
 
 def get_save_tag(prepend: str):
@@ -104,28 +108,35 @@ def forward_pass(model_lens: transformer_lens.HookedTransformer, t: str, layer: 
         o = model_lens.run_with_cache(t)[1]
     return o[layer]
 
+def get_per_layer_emb_dataset(model_lens: transformer_lens.HookedTransformer, dataset: Dataset, layers: List[str]) -> List[npt.NDArray[np.float64]]:
+    layers_out = []
+    for layer in layers:
+        ds_name = get_save_tag(f'{layer}_dataset_embd')
 
-def get_optimal_layer_kmeans(model_lens: transformer_lens.HookedTransformer, dataset, layer: str) -> List[npt.NDArray[np.float64]]:
+        # TODO: DOES THIS WORK?
+        if os.path.exists(ds_name):
+            print("Loading dataset from cache")
+            dataset_np = pickle.load(open(ds_name, 'rb'))
+        else:
+            # TODO: think about this in terms of flattening the dataset
+            dataset_np_non_flat = [list(forward_pass(model_lens, t, layer).squeeze(
+                0).detach().cpu().numpy()) for t in dataset]
+            dataset_np = [d for ds in dataset_np_non_flat for d in ds]
+            pickle.dump(dataset_np, open(ds_name, 'wb'))    
+        layers_out.append(dataset_np)
+    return np.stack(layers_out, axis=0)
+
+def get_optimal_layer_kmeans(dataset_np: npt.NDArray, layers: List[str], layer: str) -> List[npt.NDArray[np.float64]]:
     """
     For a specific layer, find the optimal number of clusters: TODO document some references for this is actually done
     Then, return the found centroids for each cluster
     """
     print(
         f"Finding optimal number of clusters and such clusters for layer {layer}")
+    layer_idx = layers.index(layer)
     # ds_name = f'metadata/{layer}_dataset_embd__SEED_{SEED}__SIZE_{N_DATASIZE}.pkl'
-    ds_name = get_save_tag(f'{layer}_dataset_embd')
-
-    # TODO: DOES THIS WORK?
-    if os.path.exists(ds_name):
-        print("Loading dataset from cache")
-        dataset_np = pickle.load(open(ds_name, 'rb'))
-    else:
-        # TODO: think about this in terms of flattening the dataset
-        dataset_np_non_flat = [list(forward_pass(model_lens, t, layer).squeeze(
-            0).detach().cpu().numpy()) for t in dataset]
-        dataset_np = [d for ds in dataset_np_non_flat for d in ds]
-        pickle.dump(dataset_np, open(ds_name, 'wb'))
-    clusters = kmeans_silhouette_method(dataset_np, layer)
+    
+    clusters = kmeans_silhouette_method(dataset_np[layer_idx], layer)
     return clusters
 
 
@@ -146,7 +157,8 @@ def cluster_model_lattice(model_lens, layers_to_centroids: List[List[npt.NDArray
         # TODO: USING INNER PRODUCT RN
         """
         next_block_ret = forward_on_block(model_lens, next_block_idx, cluster)
-        inner_prods = [np.inner(next_block_ret, c) for c in next_clusters]
+        inner_prods = [similarity_metric(next_block_ret, c)
+                       for c in next_clusters]
         if metric_cutoff is not None:
             # TODO: SHOULD THESE BE NORMED FOR COS SIM?
             inner_prods = [ip if ip >=
@@ -172,7 +184,8 @@ def to_nx_graph(cluster_scores: List[List[npt.NDArray]]) -> nx.DiGraph:
     node_idx += 1
     n_clusters = sum([len(cs) for cs in cluster_scores])
     eps = 1e-6
-    most_neg = (min([min([min(c) for c in cs]) for cs in cluster_scores])) + eps
+    most_neg = (min([min([min(c) for c in cs])
+                for cs in cluster_scores])) + eps
     print(f"Most negative absolute value: {most_neg}")
     most_neg_abs = abs(most_neg)
 
@@ -204,9 +217,39 @@ def to_nx_graph(cluster_scores: List[List[npt.NDArray]]) -> nx.DiGraph:
     for i in range(len(cluster_scores[-1])):
         G.add_edge(last_layer_start_idx + i, sink, weight=1)
 
-    nx.draw(G, with_labels=True)
+    nx.draw(G, with_labels=True, pos=nx.nx_pydot.graphviz_layout(G, prog='dot'))
     plt.savefig("graph.png")
     return G, source, sink
+
+
+def find_highest_token_per_path(token_to_original_ds: List[int], token_to_pos_original_ds: List[int],
+                                embd_dataset: npt.NDArray,
+                                path: List[int], clusters: List[List[npt.NDArray]],
+                                score_weighting_per_layer: npt.NDArray, top_n=20):
+    """
+    embd_dataset: The outer index corresponds to the layer, the inner index corresponds to the token
+    """
+    # Set the outer index to the token
+    token_per_layer = embd_dataset.swapaxes(0, 1)
+    scores = np.zeros(len(token_per_layer))
+    assert token_per_layer.shape[1] == len(path)
+
+    for i, tok in enumerate(token_per_layer):
+        score = 0
+        for layer in range(len(path)):
+            similarity_metric = np.inner(
+                tok[layer], clusters[layer][path[layer]])
+            # TODO: THIS SHOULD NOT BE A SUM
+            score += similarity_metric * score_weighting_per_layer[layer]
+        scores[i] = score
+
+    sorted_scores = np.argsort(scores, reverse=True)
+    top = []
+    for i in range(top_n):
+        idx = sorted_scores[i]
+        top.append(
+            (token_to_original_ds[idx], token_to_pos_original_ds[idx], scores[idx]))
+    return top
 
 
 def find_max_weight(cluster_scores: List[List[npt.NDArray]], K=100):
@@ -220,6 +263,7 @@ def find_max_weight(cluster_scores: List[List[npt.NDArray]], K=100):
     # paths = utils.find_top_k_paths(G, source, sink, K)
     print(paths)
     return None, G
+
 
 def get_transformer(name: str, device=DEFAULT_DEVICE):
     """
@@ -248,13 +292,32 @@ def main():
     # forward_pass(model, ds['train'][0]['text'], "")
 
     clusters = []
+    labs = [get_block_out_label(i) for i in range(N_BLOCKS)]
+    ds_emb = get_per_layer_emb_dataset(model, ds, labs)
     for i in range(N_BLOCKS):
         c = get_optimal_layer_kmeans(
-            model, ds, get_block_out_label(i))
+            ds_emb, labs, get_block_out_label(i))
         clusters.append(c)
 
-    lattice = cluster_model_lattice(model, clusters, similarity_cutoff=5)
+    lattice = cluster_model_lattice(model, clusters, similarity_cutoff=19)
     max_flow = find_max_weight(lattice)
+    
+
+    token_to_original_ds = []
+    token_to_pos_original_ds = []
+
+    for i, d in enumerate(ds):
+        tokenized = tokenizer(d['text'], return_tensors='pt')
+        for j in range(len(tokenized['input_ids'])):
+            token_to_original_ds.append(i)
+            token_to_pos_original_ds.append(j)
+
+    token_to_original_ds = [i for i in range(len(ds))]
+    find_highest_token_per_path(
+        token_to_pos_original_ds=token_to_pos_original_ds,
+        token_to_original_ds=token_to_original_ds,
+        embd_dataset=ds_emb, path=[15, 75],
+        clusters=clusters, score_weighting_per_layer=np.array([1, 1]), top_n=20)
     return max_flow
 
 
