@@ -174,8 +174,14 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixtur
 
     distance_cutoff: If the distance between two centroids is greater than this, we will not consider them to be connected.
     """
+    save_name = get_save_tag('cluster_scores')
+    if os.path.exists(save_name):
+        print("Loading cluster scores from cache")
+        return pickle.load(open(save_name, 'rb'))
+
     # We want to have the outer index be the token, the inner index be the layer
     ds = ds.swapaxes(0, 1)
+
 
     def score_cluster_to_next(curr_layer_idx: int, next_layer_idx: int, metric_cutoff: float = None) -> List[float]:
         """
@@ -190,15 +196,26 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixtur
         to_next_layer_sim = np.zeros(
             (gmms[curr_layer_idx].n_components, gmms[next_layer_idx].n_components), dtype=int)
 
-        for tok in ds:
-            high_weight_curr = np.nonzero(gmms[curr_layer_idx].predict_proba(
-                np.expand_dims(tok[curr_layer_idx], 0)) > HIGH_WEIGHT_PROB)[1]
-            high_weight_next = np.nonzero(gmms[next_layer_idx].predict_proba(
-                np.expand_dims(tok[next_layer_idx], 0)) > HIGH_WEIGHT_PROB)[1]
-            print(high_weight_curr, high_weight_next)
-            for i in high_weight_curr:
-                for j in high_weight_next:
-                    to_next_layer_sim[i, j] += 1
+        # TODO: BATCHING is a good idea and not working right now
+        # I think that I am missing a step here
+        BS = 5
+        for tok_idx in range(0, ds.shape[0], BS):
+            tok = ds[tok_idx:tok_idx + BS]
+            high_weight_currs = np.nonzero(gmms[curr_layer_idx].predict_proba(
+                tok[:, curr_layer_idx]) > HIGH_WEIGHT_PROB)
+            high_weight_nexts = np.nonzero(gmms[next_layer_idx].predict_proba(
+                tok[:, next_layer_idx]) > HIGH_WEIGHT_PROB)
+            # print("WITH BATCH", high_weight_currs, high_weight_nexts)
+            for i in range(BS):
+                col_idxs_curr = np.nonzero(high_weight_currs[0] == i)[0]
+                col_idxs_next = np.nonzero(high_weight_nexts[0] == i)[0]
+
+                high_weight_curr = high_weight_currs[1][col_idxs_curr]
+                high_weight_next = high_weight_nexts[1][col_idxs_next]
+                # print("INDEP", high_weight_curr, high_weight_next)
+                for x in high_weight_curr:
+                    for y in high_weight_next:
+                        to_next_layer_sim[x, y] += 1
         return to_next_layer_sim
 
     cluster_scores = []
@@ -208,6 +225,8 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixtur
         # TODO: into sparse matrix and then list??
         cluster_scores.append(scores_to_next)
 
+    print("CLUSTER SCORES", cluster_scores)
+    pickle.dump(cluster_scores, open(save_name, 'wb'))
     return cluster_scores
 
 
