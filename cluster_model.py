@@ -8,6 +8,7 @@ import numpy.typing as npt
 import torch
 import transformer_lens
 from sklearn.cluster import MiniBatchKMeans
+from sklearn.mixture import GaussianMixture
 from sklearn.datasets import make_blobs
 from sklearn.metrics import silhouette_samples, silhouette_score
 import scipy
@@ -31,9 +32,9 @@ N_TOKENS_CUTOFF = 100
 MODEL_NAME = 'EleutherAI/pythia-70m'
 DATASET_NAME = 'NeelNanda/pile-10k'
 
-DEBUG_N_DATASIZE = 2_000
-DEBUG_N_CLUSTERS_MIN = 300
-DEBUG_N_CLUSTERS_MAX = 300
+DEBUG_N_DATASIZE = 70
+DEBUG_N_CLUSTERS_MIN = 40
+DEBUG_N_CLUSTERS_MAX = 41
 
 # DEBUG_N_CLUSTERS_MIN = 10
 # DEBUG_N_CLUSTERS_MAX = 20
@@ -55,8 +56,15 @@ def create_param_tag():
     return m.hexdigest()[:40]
 
 
-def similarity_metric(a, b):
-    return np.inner(a, b)
+def similarity_metric(a: npt.NDArray, b: npt.NDArray):
+    return np.sum(np.exp(np.multiply(a, b)))
+
+
+def similarity_for_gmm(gmm: GaussianMixture, a: npt.NDArray, b: npt.NDArray):
+    preds_a = gmm.predict_proba(a)
+    preds_b = gmm.predict_proba(b)
+    return similarity_metric(preds_a, preds_b)
+    # return np.inner(a, b)
 
 
 def get_save_tag(prepend: str):
@@ -75,37 +83,56 @@ def forward_on_block(model, block_idx: int, data: npt.NDArray):
     return ret[0][0]
 
 
-def kmeans_silhouette_method(dataset: npt.NDArray, layer: int, n_clusters_min=N_CLUSTERS_MIN, n_clusters_max=N_CLUSTERS_MAX, skip=30):
-    tests = range(n_clusters_min, n_clusters_max, skip)
-    opt_sil = -1
-    opt_clusters = None
+# TODO: optimize numb of clusters
+def GMM_method(dataset: npt.NDArray, layer: int, n_clusters_min=N_CLUSTERS_MIN, n_clusters_max=N_CLUSTERS_MAX, skip=30) -> GaussianMixture:
+    gm_name = get_save_tag(f'{layer}_clusters_GMM')
+    if os.path.exists(gm_name):
+        print("Loading GMM clusters from cache")
+        gmm = pickle.load(open(gm_name, 'rb'))
+        return gmm
 
-    cluster_name = get_save_tag(f'{layer}_clusters')
-    if os.path.exists(cluster_name):
-        print("Loading KMeans clusters from cache")
-        return pickle.load(open(cluster_name, 'rb'))
-
-    # TODO: more like bin search
-    for n_clusters in tests:
+    # TODO: bin search
+    for n_clusters in range(n_clusters_min, n_clusters_max, skip):
         print(f"Trying {n_clusters} clusters")
-        # TODO: would be nice to be a non-mini-batch
-        clusterer = MiniBatchKMeans(n_clusters=n_clusters, random_state=SEED)
-        cluster_labels = clusterer.fit_predict(dataset)
-        silhouette_avg = silhouette_score(dataset, cluster_labels)
+        gm = GaussianMixture(n_components=n_clusters_min,
+                             random_state=SEED).fit(dataset)
+        pickle.dump(gm, open(gm_name, 'wb'))
+        # silhouette_avg = silhouette_score(dataset, gm_name)
+        # print(f"Silhouette score: {silhouette_avg}")
+        return gm
 
-        if silhouette_avg > opt_sil:
-            print(
-                f"Found better silhouette score: {silhouette_avg} with {n_clusters} clusters")
-            opt_sil = silhouette_avg
-            opt_clusters = clusterer.cluster_centers_
+# def kmeans_silhouette_method(dataset: npt.NDArray, layer: int, n_clusters_min=N_CLUSTERS_MIN, n_clusters_max=N_CLUSTERS_MAX, skip=30):
+#     tests = range(n_clusters_min, n_clusters_max, skip)
+#     opt_sil = -1
+#     opt_clusters = None
 
-    pickle.dump(opt_clusters, open(cluster_name, 'wb'))
-    return opt_clusters
+#     cluster_name = get_save_tag(f'{layer}_clusters')
+#     if os.path.exists(cluster_name):
+#         print("Loading KMeans clusters from cache")
+#         return pickle.load(open(cluster_name, 'rb'))
+
+#     # TODO: more like bin search
+#     for n_clusters in tests:
+#         print(f"Trying {n_clusters} clusters")
+#         # TODO: would be nice to be a non-mini-batch
+#         clusterer = MiniBatchKMeans(n_clusters=n_clusters, random_state=SEED)
+#         cluster_labels = clusterer.fit_predict(dataset)
+#         silhouette_avg = silhouette_score(dataset, cluster_labels)
+
+#         if silhouette_avg > opt_sil:
+#             print(
+#                 f"Found better silhouette score: {silhouette_avg} with {n_clusters} clusters")
+#             opt_sil = silhouette_avg
+#             opt_clusters = clusterer.cluster_centers_
+
+#     pickle.dump(opt_clusters, open(cluster_name, 'wb'))
+#     return opt_clusters
 
 
 def forward_pass(model_lens: transformer_lens.HookedTransformer, t: str, layer: str) -> npt.NDArray[np.float64]:
     with torch.no_grad():
         return model_lens.run_with_cache(t)[1][layer]
+
 
 def get_per_layer_emb_dataset(model_lens: transformer_lens.HookedTransformer, dataset: Dataset, layers: List[str]) -> List[npt.NDArray[np.float64]]:
     layers_out = []
@@ -126,7 +153,7 @@ def get_per_layer_emb_dataset(model_lens: transformer_lens.HookedTransformer, da
     return np.stack(layers_out, axis=0)
 
 
-def get_optimal_layer_kmeans(dataset_np: npt.NDArray, layers: List[str], layer: str) -> List[npt.NDArray[np.float64]]:
+def get_optimal_layer_gmm(dataset_np: npt.NDArray, layers: List[str], layer: str) -> List[npt.NDArray[np.float64]]:
     """
     For a specific layer, find the optimal number of clusters: TODO document some references for this is actually done
     Then, return the found centroids for each cluster
@@ -136,19 +163,21 @@ def get_optimal_layer_kmeans(dataset_np: npt.NDArray, layers: List[str], layer: 
     layer_idx = layers.index(layer)
     # ds_name = f'metadata/{layer}_dataset_embd__SEED_{SEED}__SIZE_{N_DATASIZE}.pkl'
 
-    clusters = kmeans_silhouette_method(dataset_np[layer_idx], layer)
-    return clusters
+    gm = GMM_method(dataset_np[layer_idx], layer)
+    return gm
 
 
-def cluster_model_lattice(model_lens, layers_to_centroids: List[List[npt.NDArray[np.float64]]], similarity_cutoff=float("-inf")):
+def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixture], similarity_cutoff=float("-inf")):
     """
     We will take a bit of a short cut here. Rather than passing *representatives* from each centroid to find the "strength" on the following centroids,
     we will pass the *center* of each centroid to the next layer. This is a simplification, but it should be a good starting point and quite a bit faster.
 
     distance_cutoff: If the distance between two centroids is greater than this, we will not consider them to be connected.
     """
+    # We want to have the outer index be the token, the inner index be the layer
+    ds = ds.swapaxes(0, 1)
 
-    def score_cluster_to_next(cluster, next_clusters: npt.NDArray, next_block_idx: int, metric_cutoff: float = None) -> List[float]:
+    def score_cluster_to_next(curr_layer_idx: int, next_layer_idx: int, metric_cutoff: float = None) -> List[float]:
         """
         Score the cluster to the next clusters.
         Set any score to 0 if the distance between the two centroids is greater than the distance_cutoff
@@ -156,23 +185,26 @@ def cluster_model_lattice(model_lens, layers_to_centroids: List[List[npt.NDArray
         # TODO: DIFFERENT METRICS???
         # TODO: USING INNER PRODUCT RN
         """
-        next_block_ret = forward_on_block(model_lens, next_block_idx, cluster)
-        inner_prods = [similarity_metric(next_block_ret, c)
-                       for c in next_clusters]
-        if metric_cutoff is not None:
-            # TODO: SHOULD THESE BE NORMED FOR COS SIM?
-            inner_prods = [ip if ip >=
-                           metric_cutoff else 0 for ip in inner_prods]
-        return inner_prods
+        HIGH_WEIGHT_PROB = 0.5
+
+        print(gmms)
+        to_next_layer_sim = np.zeros((len(gmms[curr_layer_idx].means_), len(
+            gmms[next_layer_idx.means_])), dtype=np.int)
+
+        for tok in ds:
+            high_weight_curr = np.nonzero(gmms[curr_layer_idx].predict_proba(tok[curr_layer_idx]) > HIGH_WEIGHT_PROB)[0]
+            high_weight_next = np.nonzero(gmms[next_layer_idx].predict_proba(tok[next_layer_idx]) > HIGH_WEIGHT_PROB)[0]
+            print(high_weight_curr, high_weight_next)
+            for i in high_weight_curr:
+                for j in high_weight_next:
+                    to_next_layer_sim[i, j] += 1
+        return to_next_layer_sim
 
     cluster_scores = []
-    for layer in range(len(layers_to_centroids) - 1):
-        layer_cs = []
-        for _, cluster in enumerate(layers_to_centroids[layer]):
-            scores_to_next = score_cluster_to_next(
-                cluster, layers_to_centroids[layer + 1], layer + 1, similarity_cutoff)
-            layer_cs.append(scores_to_next)
-        cluster_scores.append(layer_cs)
+    for layer in range(len(gmms) - 1):
+        scores_to_next = score_cluster_to_next(
+            layer, layer + 1, similarity_cutoff)
+        cluster_scores.append(scores_to_next) # TODO: into sparse matrix and then list??
 
     return cluster_scores
 
@@ -295,15 +327,15 @@ def main():
 
     # forward_pass(model, ds['train'][0]['text'], "")
 
-    clusters = []
+    gmms = []
     labs = [get_block_out_label(i) for i in range(N_BLOCKS)]
     ds_emb = get_per_layer_emb_dataset(model, ds, labs)
     for i in range(N_BLOCKS):
-        c = get_optimal_layer_kmeans(
+        gmm = get_optimal_layer_gmm(
             ds_emb, labs, get_block_out_label(i))
-        clusters.append(c)
+        gmms.append(gmm)
 
-    lattice = cluster_model_lattice(model, clusters, similarity_cutoff=19)
+    lattice = cluster_model_lattice(model, ds_emb, gmms, similarity_cutoff=19)
     max_flow = find_max_weight(lattice)
 
     token_to_original_ds = []
@@ -325,7 +357,7 @@ def main():
         token_to_pos_original_ds=token_to_pos_original_ds,
         token_to_original_ds=token_to_original_ds,
         embd_dataset=ds_emb, path=[10, 15, 30],
-        clusters=clusters, score_weighting_per_layer=np.array([1, 1, 1]), top_n=20)
+        clusters=gmms, score_weighting_per_layer=np.array([1, 1, 1]), top_n=20)
     print(highest)
     return max_flow, highest
 
