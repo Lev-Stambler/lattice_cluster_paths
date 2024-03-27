@@ -26,14 +26,14 @@ N_CLUSTERS_MIN = int(0.5 * N_DIMS)
 N_CLUSTERS_MAX = 10 * N_DIMS
 # TODO: CHANGE BACK TO 6/ MAKE THIS A PARAM
 N_BLOCKS = 2
+N_TOKENS_CUTOFF = 100
 
-# TODO: into params for save
 MODEL_NAME = 'EleutherAI/pythia-70m'
 DATASET_NAME = 'NeelNanda/pile-10k'
 
-DEBUG_N_DATASIZE = 100
-DEBUG_N_CLUSTERS_MIN = 60
-DEBUG_N_CLUSTERS_MAX = 70
+DEBUG_N_DATASIZE = 45
+DEBUG_N_CLUSTERS_MIN = 10
+DEBUG_N_CLUSTERS_MAX = 20
 
 # DEBUG_N_CLUSTERS_MIN = 10
 # DEBUG_N_CLUSTERS_MAX = 20
@@ -52,7 +52,7 @@ def create_param_tag():
     m = hashlib.sha256()
     m.update(
         f'{MODEL_NAME}{DATASET_NAME}{SEED}{N_DATASIZE}{N_CLUSTERS_MIN}{N_CLUSTERS_MAX}{N_BLOCKS}'.encode())
-    return m.hexdigest()[:32]
+    return m.hexdigest()[:40]
 
 
 def similarity_metric(a, b):
@@ -105,8 +105,15 @@ def kmeans_silhouette_method(dataset: npt.NDArray, layer: int, n_clusters_min=N_
 
 def forward_pass(model_lens: transformer_lens.HookedTransformer, t: str, layer: str) -> npt.NDArray[np.float64]:
     with torch.no_grad():
-        o = model_lens.run_with_cache(t)[1]
-    return o[layer]
+        return model_lens.run_with_cache(t)[1][layer]
+    #     toks = model_lens.tokenizer(t, return_tensors='pt')
+    #     print(toks)
+    #     o = model_lens.run_with_cache(
+    #         input_ids=toks['input_ids'][:N_TOKENS_CUTOFF],
+    #         attention_mask=toks['attention_mask'][:N_TOKENS_CUTOFF],
+    #     )[1]
+    # return o[layer]
+
 
 def get_per_layer_emb_dataset(model_lens: transformer_lens.HookedTransformer, dataset: Dataset, layers: List[str]) -> List[npt.NDArray[np.float64]]:
     layers_out = []
@@ -122,9 +129,10 @@ def get_per_layer_emb_dataset(model_lens: transformer_lens.HookedTransformer, da
             dataset_np_non_flat = [list(forward_pass(model_lens, t, layer).squeeze(
                 0).detach().cpu().numpy()) for t in dataset]
             dataset_np = [d for ds in dataset_np_non_flat for d in ds]
-            pickle.dump(dataset_np, open(ds_name, 'wb'))    
+            pickle.dump(dataset_np, open(ds_name, 'wb'))
         layers_out.append(dataset_np)
     return np.stack(layers_out, axis=0)
+
 
 def get_optimal_layer_kmeans(dataset_np: npt.NDArray, layers: List[str], layer: str) -> List[npt.NDArray[np.float64]]:
     """
@@ -135,7 +143,7 @@ def get_optimal_layer_kmeans(dataset_np: npt.NDArray, layers: List[str], layer: 
         f"Finding optimal number of clusters and such clusters for layer {layer}")
     layer_idx = layers.index(layer)
     # ds_name = f'metadata/{layer}_dataset_embd__SEED_{SEED}__SIZE_{N_DATASIZE}.pkl'
-    
+
     clusters = kmeans_silhouette_method(dataset_np[layer_idx], layer)
     return clusters
 
@@ -182,7 +190,9 @@ def to_nx_graph(cluster_scores: List[List[npt.NDArray]]) -> nx.DiGraph:
     node_idx = 0
     source = 0
     node_idx += 1
-    n_clusters = sum([len(cs) for cs in cluster_scores]) + len(cluster_scores[-1][0]) # We need to account for all outgoing from the end
+    # We need to account for all outgoing from the end
+    n_clusters = sum([len(cs) for cs in cluster_scores]) + \
+        len(cluster_scores[-1][0])
     eps = 1e-6
     most_neg = (min([min([min(c) for c in cs])
                 for cs in cluster_scores])) + eps
@@ -239,15 +249,16 @@ def find_highest_token_per_path(token_to_original_ds: List[int], token_to_pos_or
         score = 0
         for layer in range(len(path)):
             similarity_metric = np.inner(
-                tok[layer], clusters[layer][path[layer]])
+                tok[layer], clusters[layer][path[layer] - 60 * layer])  # TODO: SUPER SUPER GETHOT
             # TODO: THIS SHOULD NOT BE A SUM
             score += similarity_metric * score_weighting_per_layer[layer]
         scores[i] = score
 
-    sorted_scores = np.argsort(scores, reverse=True)
+    sorted_scores = np.argsort(scores)[::-1]
     top = []
     for i in range(top_n):
         idx = sorted_scores[i]
+        print("IIII", idx)
         top.append(
             (token_to_original_ds[idx], token_to_pos_original_ds[idx], scores[idx]))
     return top
@@ -270,8 +281,9 @@ def get_transformer(name: str, device=DEFAULT_DEVICE):
     """
     Get the transformer model from the name
     """
-    tokenizer = AutoTokenizer.from_pretrained(name)
+    # tokenizer = AutoTokenizer.from_pretrained(name)
     model = transformer_lens.HookedTransformer.from_pretrained(name).to(device)
+    tokenizer = model.tokenizer
     return model, tokenizer
 
 
@@ -302,23 +314,27 @@ def main():
 
     lattice = cluster_model_lattice(model, clusters, similarity_cutoff=19)
     max_flow = find_max_weight(lattice)
-    
 
     token_to_original_ds = []
     token_to_pos_original_ds = []
 
     for i, d in enumerate(ds):
-        tokenized = tokenizer(d, return_tensors='pt')
-        for j in range(len(tokenized['input_ids'])):
+        tokenized = model.to_tokens(d)[0]
+        # print(tokenized)
+        # return
+        for j in range(len(tokenized)):
             token_to_original_ds.append(i)
             token_to_pos_original_ds.append(j)
 
-    token_to_original_ds = [i for i in range(len(ds))]
+    print("DS", ds_emb.shape, len(token_to_original_ds))
+    assert len(token_to_original_ds) == len(
+        token_to_pos_original_ds) == ds_emb.shape[1]
+
     find_highest_token_per_path(
         token_to_pos_original_ds=token_to_pos_original_ds,
         token_to_original_ds=token_to_original_ds,
         embd_dataset=ds_emb, path=[15, 75, 123],
-        clusters=clusters, score_weighting_per_layer=np.array([1, 1]), top_n=20)
+        clusters=clusters, score_weighting_per_layer=np.array([1, 1, 1]), top_n=20)
     return max_flow
 
 
