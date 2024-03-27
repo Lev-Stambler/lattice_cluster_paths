@@ -61,8 +61,8 @@ def similarity_metric(a: npt.NDArray, b: npt.NDArray):
 
 
 def similarity_for_gmm(gmm: GaussianMixture, a: npt.NDArray, b: npt.NDArray):
-    preds_a = gmm.predict_proba(a)
-    preds_b = gmm.predict_proba(b)
+    preds_a = gmm.predict_proba(a.expand_dims(0))
+    preds_b = gmm.predict_proba(b.expand_dims(0))
     return similarity_metric(preds_a, preds_b)
     # return np.inner(a, b)
 
@@ -187,15 +187,14 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixtur
         """
         HIGH_WEIGHT_PROB = 0.5
 
-        print(gmms)
         to_next_layer_sim = np.zeros(
             (gmms[curr_layer_idx].n_components, gmms[next_layer_idx].n_components), dtype=int)
 
         for tok in ds:
             high_weight_curr = np.nonzero(gmms[curr_layer_idx].predict_proba(
-                tok[curr_layer_idx]) > HIGH_WEIGHT_PROB)[0]
+                np.expand_dims(tok[curr_layer_idx], 0)) > HIGH_WEIGHT_PROB)[1]
             high_weight_next = np.nonzero(gmms[next_layer_idx].predict_proba(
-                tok[next_layer_idx]) > HIGH_WEIGHT_PROB)[0]
+                np.expand_dims(tok[next_layer_idx], 0)) > HIGH_WEIGHT_PROB)[1]
             print(high_weight_curr, high_weight_next)
             for i in high_weight_curr:
                 for j in high_weight_next:
