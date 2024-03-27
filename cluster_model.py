@@ -1,21 +1,15 @@
 import os
 import pickle
-from transformers import AutoTokenizer, AutoModelForCausalLM
 from datasets import Dataset, load_dataset
 from typing import List
 import numpy as np
 import numpy.typing as npt
 import torch
 import transformer_lens
-from sklearn.cluster import MiniBatchKMeans
 from sklearn.mixture import GaussianMixture
-from sklearn.datasets import make_blobs
-from sklearn.metrics import silhouette_samples, silhouette_score
-import scipy
 import hashlib
 import networkx as nx
 import utils
-import matplotlib.pyplot as plt
 
 
 DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -191,6 +185,7 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixtur
         # TODO: DIFFERENT METRICS???
         # TODO: USING INNER PRODUCT RN
         """
+        print("Getting scores for layers", curr_layer_idx, "to", next_layer_idx)
         HIGH_WEIGHT_PROB = 0.5
 
         to_next_layer_sim = np.zeros(
@@ -198,7 +193,7 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixtur
 
         # TODO: BATCHING is a good idea and not working right now
         # I think that I am missing a step here
-        BS = 5
+        BS = 32
         for tok_idx in range(0, ds.shape[0], BS):
             tok = ds[tok_idx:tok_idx + BS]
             high_weight_currs = np.nonzero(gmms[curr_layer_idx].predict_proba(
@@ -279,7 +274,7 @@ def to_nx_graph(cluster_scores: List[List[npt.NDArray]]) -> nx.DiGraph:
 
 def find_highest_token_per_path(token_to_original_ds: List[int], token_to_pos_original_ds: List[int],
                                 embd_dataset: npt.NDArray,
-                                path: List[int], clusters: List[List[npt.NDArray]],
+                                path: List[int], gmms: List[GaussianMixture],
                                 score_weighting_per_layer: npt.NDArray, top_n=20):
     """
     embd_dataset: The outer index corresponds to the layer, the inner index corresponds to the token
@@ -293,9 +288,16 @@ def find_highest_token_per_path(token_to_original_ds: List[int], token_to_pos_or
     for i, tok in enumerate(token_per_layer):
         score = 0
         for layer in range(len(path)):
+            # TODO: change
+            selector = np.zeros(gmms[layer].n_components)
+            print("PATH LAYER", layer, path, N_CLUSTERS_MIN, path[layer] - N_CLUSTERS_MIN * layer - 1)
+            selector[path[layer] - N_CLUSTERS_MIN * layer - 1] = 1
             similarity_metric = np.inner(
                 # TODO: we want to use a map from vertex to cluster
-                tok[layer], clusters[layer][path[layer] - N_CLUSTERS_MIN * layer - 1])  # TODO: SUPER SUPER GETHOT
+                selector, gmms[layer].predict_proba(
+                    tok[layer].reshape(1, -1)
+                )
+            )  # TODO: SUPER SUPER GETHOT
             score += similarity_metric * score_weighting_per_layer[layer]
         scores[i] = score
 
@@ -377,8 +379,8 @@ def main():
     highest = find_highest_token_per_path(
         token_to_pos_original_ds=token_to_pos_original_ds,
         token_to_original_ds=token_to_original_ds,
-        embd_dataset=ds_emb, path=[10, 15, 30],
-        clusters=gmms, score_weighting_per_layer=np.array([1, 1, 1]), top_n=20)
+        embd_dataset=ds_emb, path=[8, 57, 89],
+        gmms=gmms, score_weighting_per_layer=np.array([1, 1, 1]), top_n=20)
     print(highest)
     return max_flow, highest
 
