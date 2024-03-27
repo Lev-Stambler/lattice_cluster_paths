@@ -188,12 +188,14 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixtur
         HIGH_WEIGHT_PROB = 0.5
 
         print(gmms)
-        to_next_layer_sim = np.zeros((len(gmms[curr_layer_idx].means_), len(
-            gmms[next_layer_idx.means_])), dtype=np.int)
+        to_next_layer_sim = np.zeros(
+            (gmms[curr_layer_idx].n_components, gmms[next_layer_idx].n_components), dtype=int)
 
         for tok in ds:
-            high_weight_curr = np.nonzero(gmms[curr_layer_idx].predict_proba(tok[curr_layer_idx]) > HIGH_WEIGHT_PROB)[0]
-            high_weight_next = np.nonzero(gmms[next_layer_idx].predict_proba(tok[next_layer_idx]) > HIGH_WEIGHT_PROB)[0]
+            high_weight_curr = np.nonzero(gmms[curr_layer_idx].predict_proba(
+                tok[curr_layer_idx]) > HIGH_WEIGHT_PROB)[0]
+            high_weight_next = np.nonzero(gmms[next_layer_idx].predict_proba(
+                tok[next_layer_idx]) > HIGH_WEIGHT_PROB)[0]
             print(high_weight_curr, high_weight_next)
             for i in high_weight_curr:
                 for j in high_weight_next:
@@ -204,7 +206,8 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixtur
     for layer in range(len(gmms) - 1):
         scores_to_next = score_cluster_to_next(
             layer, layer + 1, similarity_cutoff)
-        cluster_scores.append(scores_to_next) # TODO: into sparse matrix and then list??
+        # TODO: into sparse matrix and then list??
+        cluster_scores.append(scores_to_next)
 
     return cluster_scores
 
