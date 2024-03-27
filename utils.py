@@ -294,6 +294,7 @@ def logit_lens(model, best_feature, dictionary):
     print(topk_values)
 
 def top_k_paths_to_end(G, start, end, k, weight='weight'):
+    nx.dag_longest_path
     # Perform topological sort on the DAG
     topo_sort = list(nx.topological_sort(G))
     

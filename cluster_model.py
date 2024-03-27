@@ -14,6 +14,7 @@ import scipy
 import hashlib
 import networkx as nx
 import utils
+import matplotlib.pyplot as plt
 
 
 DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -146,7 +147,7 @@ def cluster_model_lattice(model_lens, layers_to_centroids: List[List[npt.NDArray
         """
         next_block_ret = forward_on_block(model_lens, next_block_idx, cluster)
         inner_prods = [np.inner(next_block_ret, c) for c in next_clusters]
-        if metric_cutoff:
+        if metric_cutoff is not None:
             # TODO: SHOULD THESE BE NORMED FOR COS SIM?
             inner_prods = [ip if ip >=
                            metric_cutoff else 0 for ip in inner_prods]
@@ -164,17 +165,18 @@ def cluster_model_lattice(model_lens, layers_to_centroids: List[List[npt.NDArray
     return cluster_scores
 
 
-def to_nx_graph(cluster_scores: List[List[npt.NDArray]], cutoff=0.1) -> nx.DiGraph:
+def to_nx_graph(cluster_scores: List[List[npt.NDArray]]) -> nx.DiGraph:
     SCALING_RESOLUTION = 1000
     node_idx = 0
     source = 0
     node_idx += 1
     n_clusters = sum([len(cs) for cs in cluster_scores])
     eps = 1e-6
-    most_neg_abs = abs(min([min([min(c) for c in cs]) for cs in cluster_scores])) + eps
+    most_neg = (min([min([min(c) for c in cs]) for cs in cluster_scores])) + eps
+    print(f"Most negative absolute value: {most_neg}")
+    most_neg_abs = abs(most_neg)
 
     print(f"We have {n_clusters} clusters")
-    csgraph = np.zeros((n_clusters + 2, n_clusters + 2), dtype=int)
 
     G = nx.DiGraph()
     last_layer_start_idx = -1
@@ -188,12 +190,12 @@ def to_nx_graph(cluster_scores: List[List[npt.NDArray]], cutoff=0.1) -> nx.DiGra
                 next_idx = layer_start_idx + n_in_layer + j
                 # TODO: ROUNDING ISSUES?!!?
                 # csgraph[node_idx, next_idx] = round(c)
-                w = round((c + most_neg_abs) * SCALING_RESOLUTION)
+                if c + most_neg_abs > 0:
+                    w = round((c + most_neg_abs) * SCALING_RESOLUTION)
                 # print("AAA", w, node_idx, next_idx)
                 G.add_edge(node_idx, next_idx, weight=w)
             node_idx += 1
 
-    print("AAA", last_layer_start_idx, len(cluster_scores[-1]), n_clusters)
     sink = n_clusters
 
     for i, _ in enumerate(cluster_scores[0]):
@@ -201,15 +203,9 @@ def to_nx_graph(cluster_scores: List[List[npt.NDArray]], cutoff=0.1) -> nx.DiGra
         G.add_edge(source, i + 1, weight=1)
     for i in range(len(cluster_scores[-1])):
         G.add_edge(last_layer_start_idx + i, sink, weight=1)
-        # csgraph[last_layer_start_idx + i, sink] = 1
 
-    # for i in range(csgraph.shape[0]):
-    #     for j in range(csgraph.shape[1]):
-    #         if csgraph[i, j] + most_neg_abs > cutoff:
-    #             G.add_edge(i, j, weight=csgraph[i, j] + most_neg_abs) # Ensure all weights are positive
-    #         if csgraph[i, j] < 0:
-    #             print(f"Negative weight: {csgraph[i, j]}")
-
+    nx.draw(G, with_labels=True)
+    plt.savefig("graph.png")
     return G, source, sink
 
 
@@ -257,7 +253,7 @@ def main():
             model, ds, get_block_out_label(i))
         clusters.append(c)
 
-    lattice = cluster_model_lattice(model, clusters)
+    lattice = cluster_model_lattice(model, clusters, similarity_cutoff=2)
     max_flow = find_max_weight(lattice)
     return max_flow
 
