@@ -320,7 +320,7 @@ def find_max_weight(cluster_scores: List[List[npt.NDArray]], K=100):
     G, source, sink = to_nx_graph(cluster_scores)
     paths = utils.top_k_paths_to_end(G, source, sink, K)
     # paths = utils.find_top_k_paths(G, source, sink, K)
-    print(paths)
+    print("GOT PATHS", paths)
     return None, G
 
 

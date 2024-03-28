@@ -272,17 +272,34 @@ def logit_lens(model, best_feature, dictionary):
     print(f"{top_text}")
     print(topk_values)
 
+
+def top_k_dag_paths_dynamic(layers: List[List[float]], start_layer, top_layer, k, weight='weight'):
+    assert len(layers) > 1, "Need at least 2 layers"
+    assert start_layer < top_layer, "Start layer must be less than top layer"
+    assert top_layer < len(layers), "Top layer must be less than the number of layers"
+    
+    memoizer = {}
+
+    def recur(layer: int, node: int, PQ):
+        if (layer, node) in memoizer:
+            return memoizer[(layer, node)]
+
+        raise NotImplementedError
+        # memoizer[(layer, node)] = 
+
+# We have to implement https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3009499/
+
+
 def top_k_paths_to_end(G, start, end, k, weight='weight'):
-    nx.dag_longest_path
     # Perform topological sort on the DAG
     topo_sort = list(nx.topological_sort(G))
-    
+
     # Initialize dictionaries for storing the maximum path weights and paths
     max_weight = {node: float('-inf') for node in G}
     max_weight[start] = 0
     paths = {node: [] for node in G}
     paths[start] = [[start]]
-    
+
     # Heap to maintain top k paths
     top_paths = []
 
@@ -291,17 +308,20 @@ def top_k_paths_to_end(G, start, end, k, weight='weight'):
         for successor in G.successors(node):
             edge_weight = G[node][successor][weight]
             new_weight = max_weight[node] + edge_weight
-            
+
             # Update only if the new weight is better
             if new_weight > max_weight[successor]:
                 max_weight[successor] = new_weight
                 paths[successor] = [path + [successor] for path in paths[node]]
-            elif new_weight == max_weight[successor]:  # Handle paths with equal weight
-                paths[successor].extend([path + [successor] for path in paths[node]])
+            # Handle paths with equal weight
+            elif new_weight == max_weight[successor]:
+                paths[successor].extend([path + [successor]
+                                        for path in paths[node]])
 
     # Only consider paths that end at the 'end' vertex
     for path in paths[end]:
-        path_weight = sum(G[path[i]][path[i + 1]][weight] for i in range(len(path) - 1))
+        path_weight = sum(G[path[i]][path[i + 1]][weight]
+                          for i in range(len(path) - 1))
         if len(top_paths) < k:
             heapq.heappush(top_paths, (path_weight, path))
         else:
