@@ -291,7 +291,7 @@ def score_tokens_for_path(embd_dataset: npt.NDArray,
         for layer in range(len(path)):
             # TODO: change
             selector = np.zeros(gmms[layer].n_components)
-            selector[path[layer] - N_CLUSTERS_MIN * layer - 1] = 1
+            selector[path[layer]] = 1
             similarity_metric = np.inner(
                 # TODO: we want to use a map from vertex to cluster
                 selector, gmms[layer].predict_proba(
