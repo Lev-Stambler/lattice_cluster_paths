@@ -1,7 +1,7 @@
 import os
 import pickle
 from datasets import Dataset, load_dataset
-from typing import List
+from typing import List, Union
 import numpy as np
 import numpy.typing as npt
 import torch
@@ -128,13 +128,14 @@ def forward_pass(model_lens: transformer_lens.HookedTransformer, t: str, layer: 
         return model_lens.run_with_cache(t)[1][layer]
 
 
-def get_per_layer_emb_dataset(model_lens: transformer_lens.HookedTransformer, dataset: Dataset, layers: List[str]) -> List[npt.NDArray[np.float64]]:
+# TODO: we should have better labeling!!
+def get_per_layer_emb_dataset(model_lens: transformer_lens.HookedTransformer, dataset: Dataset, layers: List[str], use_save=True) -> List[npt.NDArray[np.float64]]:
     layers_out = []
     for layer in layers:
         ds_name = get_save_tag(f'{layer}_dataset_embd')
 
         # TODO: DOES THIS WORK?
-        if os.path.exists(ds_name):
+        if os.path.exists(ds_name) and use_save:
             print("Loading dataset from cache")
             dataset_np = pickle.load(open(ds_name, 'rb'))
         else:
@@ -142,7 +143,7 @@ def get_per_layer_emb_dataset(model_lens: transformer_lens.HookedTransformer, da
             dataset_np_non_flat = [list(forward_pass(model_lens, t, layer).squeeze(
                 0).detach().cpu().numpy()) for t in dataset]
             dataset_np = [d for ds in dataset_np_non_flat for d in ds]
-            pickle.dump(dataset_np, open(ds_name, 'wb'))
+            if use_save: pickle.dump(dataset_np, open(ds_name, 'wb'))
         layers_out.append(dataset_np)
     return np.stack(layers_out, axis=0)
 
@@ -161,7 +162,7 @@ def get_optimal_layer_gmm(dataset_np: npt.NDArray, layers: List[str], layer: str
     return gm
 
 
-def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixture], similarity_cutoff=float("-inf")):
+def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixture], similarity_cutoff=float("-inf")) -> List[List[float]]:
     """
     We will take a bit of a short cut here. Rather than passing *representatives* from each centroid to find the "strength" on the following centroids,
     we will pass the *center* of each centroid to the next layer. This is a simplification, but it should be a good starting point and quite a bit faster.
@@ -272,8 +273,8 @@ def to_nx_graph(cluster_scores: List[List[npt.NDArray]]) -> nx.DiGraph:
     return G, source, sink
 
 
-def find_highest_token_per_path(token_to_original_ds: List[int], token_to_pos_original_ds: List[int],
-                                embd_dataset: npt.NDArray,
+# TODO: make this batched
+def score_tokens_for_path(embd_dataset: npt.NDArray,
                                 path: List[int], gmms: List[GaussianMixture],
                                 score_weighting_per_layer: npt.NDArray, top_n=20):
     """
@@ -290,7 +291,6 @@ def find_highest_token_per_path(token_to_original_ds: List[int], token_to_pos_or
         for layer in range(len(path)):
             # TODO: change
             selector = np.zeros(gmms[layer].n_components)
-            print("PATH LAYER", layer, path, N_CLUSTERS_MIN, path[layer] - N_CLUSTERS_MIN * layer - 1)
             selector[path[layer] - N_CLUSTERS_MIN * layer - 1] = 1
             similarity_metric = np.inner(
                 # TODO: we want to use a map from vertex to cluster
@@ -301,13 +301,14 @@ def find_highest_token_per_path(token_to_original_ds: List[int], token_to_pos_or
             score += similarity_metric * score_weighting_per_layer[layer]
         scores[i] = score
 
-    sorted_scores = np.argsort(scores)[::-1]
-    top = []
-    for i in range(top_n):
-        idx = sorted_scores[i]
-        top.append(
-            (token_to_original_ds[idx], token_to_pos_original_ds[idx], scores[idx]))
-    return top
+    return scores
+    # sorted_scores = np.argsort(scores)[::-1]
+    # top = []
+    # for i in range(top_n):
+        # idx = sorted_scores[i]
+        # top.append(
+            # (token_to_original_ds[idx], token_to_pos_original_ds[idx], scores[idx]))
+    # return top
 
 
 def find_max_weight(cluster_scores: List[List[npt.NDArray]], K=100):
@@ -340,6 +341,65 @@ def get_dataset(name: str):
     return load_dataset(name)
 
 
+class Decomposer:
+    gmms: List[GaussianMixture]
+    lattice_scores: List[List[float]]
+
+    def __init__(self, model_lens, dataset: Dataset, layers: List[str], similarity_cutoff=19):
+        self.model_lens = model_lens
+        self.dataset = dataset
+        self.layers = layers
+        self.similarity_cutoff = similarity_cutoff
+        self.gmms = []
+        self.lattice_scores = None
+
+    def load(self):
+        for i in range(len(self.layers)):
+            self.gmms.append(get_optimal_layer_gmm(
+                self.dataset, self.layers, self.layers[i]))
+        self.lattice_scores = cluster_model_lattice(
+            self.model_lens, self.dataset, self.gmms, self.similarity_cutoff)
+
+    def score(self, to_score: List[str], score_path = [8, 57, 89], embeds: Union[npt.NDArray, None] = None):
+        if embeds is None:
+            embeds = get_per_layer_emb_dataset(
+                self.model_lens, to_score, self.layers, use_save=False)
+        ds = to_score
+        token_to_original_ds = []
+        token_to_pos_original_ds = []
+
+        for i, d in enumerate(ds):
+            tokenized = self.model_lens.to_tokens(d)[0]
+            # print(tokenized)
+            # return
+            for j in range(len(tokenized)):
+                token_to_original_ds.append(i)
+                token_to_pos_original_ds.append(j)
+
+        print("DS", embeds.shape, len(token_to_original_ds))
+        assert len(token_to_original_ds) == len(
+            token_to_pos_original_ds) == embeds.shape[1]
+        scores = score_tokens_for_path(
+            embd_dataset=embeds, path=score_path,
+            gmms=self.gmms, score_weighting_per_layer=np.array([1, 1, 1]), top_n=20)
+        item_to_scores = {}
+        for i in range(len(scores)):
+            item = token_to_original_ds[i]
+            if item not in item_to_scores:
+                item_to_scores[item] = []
+            item_to_scores[item].append(scores[i])
+        # Assuming that the scores are "dense" in how they were added, we have a list
+        ks = sorted(list(item_to_scores.keys()))
+        final_scores = []
+        for k in ks:
+            s = item_to_scores[k]
+            final_scores.append(s)
+        
+        return final_scores
+
+
+# def get_par
+
 def main():
     model, tokenizer = get_transformer(MODEL_NAME)
 
@@ -347,7 +407,6 @@ def main():
     # TODO: we will have to do more than th
     shuffled = ds.shuffle(seed=SEED)['train'][:N_DATASIZE]['text']
     ds = shuffled
-
     # forward_pass(model, ds['train'][0]['text'], "")
 
     gmms = []
@@ -376,7 +435,7 @@ def main():
     assert len(token_to_original_ds) == len(
         token_to_pos_original_ds) == ds_emb.shape[1]
 
-    highest = find_highest_token_per_path(
+    highest = score_tokens_for_path(
         token_to_pos_original_ds=token_to_pos_original_ds,
         token_to_original_ds=token_to_original_ds,
         embd_dataset=ds_emb, path=[8, 57, 89],

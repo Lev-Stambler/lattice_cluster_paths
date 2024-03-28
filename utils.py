@@ -1,10 +1,11 @@
+from typing import List
 from circuitsvis.activations import text_neuron_activations
 import torch
 import numpy as np
 from einops import rearrange
 import networkx as nx
 import heapq
-
+import transformer_lens
 # TODO: this is just a c and p rn
 
 # Get the activations for the best dict features
@@ -123,32 +124,10 @@ def ablate_text(text, feature, model, autoencoder, layer,  setting="plot"):
         return display_text_list, activation_list
 
 
-def visualize_text(text, feature, model, autoencoder, layer, setting="dictionary_basis", max_activation=None):
-    if isinstance(text, str):
-        text = [text]
-    if isinstance(feature, int):
-        feature = [feature]
-    display_text_list = []
-    act_list = []
-    for t in text:
-        if isinstance(t, str):  # If the text is a list of tokens
-            split_text = model.to_str_tokens(t, prepend_bos=False)
-            token = model.to_tokens(t, prepend_bos=False)
-        else:  # t are tokens
-            token = t
-            split_text = model.to_str_tokens(t, prepend_bos=False)
-        for f in feature:
-            display_text_list += [x.replace('\n', '\\newline')
-                                  for x in split_text] + ["\n"]
-            act_list += get_neuron_activation(token, f,
-                                              model, autoencoder, layer, setting) + [0.0]
-    act_list = torch.tensor(act_list).reshape(-1, 1, 1)
-    if (max_activation is not None):
-        act_list = torch.clamp(act_list, max=max_activation)
-    return text_neuron_activations(tokens=display_text_list, activations=act_list)
-
-# Ablate the feature direction of the tokens
-# token_list is a list of tokens, convert to tensor of shape (batch_size, seq_len)
+def visualize_text(model: transformer_lens.HookedTransformer, tokens: List[List[int]], scores_per_token: List[List[float]]):
+    texts = [model.tokenizer.decode(ts) for ts in tokens]
+    for text, ts, scores in zip(texts, tokens, scores_per_token):
+        text_neuron_activations(tokens=text, activations=scores)
 
 
 def ablate_feature_direction(tokens, feature, model, autoencoder, layer):
@@ -331,43 +310,3 @@ def top_k_paths_to_end(G, start, end, k, weight='weight'):
     # Sort the results based on weights in descending order before returning
     top_paths.sort(reverse=True, key=lambda x: x[0])
     return top_paths
-
-# def top_k_paths(G, start, k, weight='weight'):
-#     # Perform topological sort on the DAG
-#     topo_sort = list(nx.topological_sort(G))
-    
-#     # Initialize dictionaries for storing the maximum path weights and paths
-#     max_weight = {node: float('-inf') for node in G}
-#     max_weight[start] = 0
-#     paths = {node: [] for node in G}
-#     paths[start] = [[start]]
-    
-#     # Heap to maintain top k paths
-#     top_paths = []
-
-#     # Update weights and paths based on the topological order
-#     for node in topo_sort:
-#         for successor in G.successors(node):
-#             edge_weight = G[node][successor][weight]
-#             new_weight = max_weight[node] + edge_weight
-            
-#             if new_weight > max_weight[successor]:
-#                 max_weight[successor] = new_weight
-#                 paths[successor] = [path + [successor] for path in paths[node]]
-#             elif new_weight == max_weight[successor]:  # For handling equal weights
-#                 paths[successor].extend([path + [successor] for path in paths[node]])
-
-#     # Extract paths and their weights
-#     for end_node in paths:
-#         for path in paths[end_node]:
-#             path_weight = sum(G[path[i]][path[i + 1]][weight] for i in range(len(path) - 1))
-#             # If the heap is smaller than k, just add the new path
-#             if len(top_paths) < k:
-#                 heapq.heappush(top_paths, (path_weight, path))
-#             else:
-#                 # If the new path has greater weight than the smallest in the heap, replace the smallest
-#                 heapq.heappushpop(top_paths, (path_weight, path))
-
-#     # Sort the results based on weights in descending order before returning
-#     top_paths.sort(reverse=True, key=lambda x: x[0])
-#     return top_paths
