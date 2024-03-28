@@ -273,20 +273,27 @@ def logit_lens(model, best_feature, dictionary):
     print(topk_values)
 
 
-def top_k_dag_paths_dynamic(layers: List[List[List[float]]], start_layer, top_layer, k, weight='weight'):
-    assert len(layers) > 1, "Need at least 2 layers"
-    assert start_layer < top_layer, "Start layer must be less than top layer"
-    assert top_layer < len(layers), "Top layer must be less than the number of layers"
-    
-    memoizer = {}
+def top_k_dag_paths_dynamic(layers: List[List[List[float]]], k: int, top_layer: int = None):
+    n_to_top_layer = len(layers[-1][0])
+    layers = layers + [
+        [[0.0] for _ in range(n_to_top_layer)]
+    ]
 
-    def recur(layer: int, node_layer_idx: int, top_k_per_layer):
+    if top_layer is None:
+        top_layer = len(layers)
+    assert len(layers) > 1, "Need at least 2 layers"
+    assert top_layer <= len(
+        layers), "Top layer must be less than the number of layers"
+
+
+    def recur(layer: int, node_layer_idx: int, memoizer):
         if (layer, node_layer_idx) in memoizer:
             return memoizer[(layer, node_layer_idx)]
 
         # Base case
         if layer == 0:
-            return top_k_per_layer[layer]
+            # TODO: RETURN SOMETHING HERE
+            return [([-1], 0)]
 
         past_layer = layer - 1
         past_layer_vals = layers[past_layer]
@@ -294,23 +301,53 @@ def top_k_dag_paths_dynamic(layers: List[List[List[float]]], start_layer, top_la
         # Get the inbound values
         vs = [s[node_layer_idx] for s in past_layer_vals]
 
-        new_top_k = []
+        paths = []
         for i, v in enumerate(vs):
-            for (node_path, val) in top_k_per_layer[layer]:
-                new_top_k.append(([i] + [node_path], v + val))
+            top_paths_for_i = recur(past_layer, i, memoizer)
+            for (node_path, val) in top_paths_for_i:
+                new_path = node_path + [node_layer_idx]
+                new_val = val + v
+                paths.append((new_path, new_val))
 
-        new_top_k.sort(key=lambda x: x[1], reverse=True)[:k]
+        seen = set()
+        deduped_list = [x for x in paths if not (str(x) in seen or seen.add(str(x)))]
+        deduped_list.sort(key=lambda x: x[1], reverse=True)
+        deduped_list = paths[:k]
+        memoizer[(layer, node_layer_idx)] = deduped_list
+        return deduped_list
 
-        all_rets = []
-        for past_layer_idx in range(len(past_layer_vals)):
-            ret = recur(past_layer, past_layer_idx, new_top_k)
-            memoizer[(layer, node_layer_idx)] = ret
-            all_rets.append(ret)
-        all_flat = [item for sublist in all_rets for item in sublist]
-        top_rets = all_flat.sort(key=lambda x: x[1], reverse=True)[:k]
+        #         # print(node_path, val)
+        #         new_top_k.append(([i] + node_path, v + val))
 
-        return top_rets
-        # memoizer[(layer, node)] = 
+        # new_top_k.sort(key=lambda x: x[1], reverse=True)
+        # new_top_k = new_top_k[:k]
+
+        # all_rets = []
+        # for past_layer_idx in range(len(past_layer_vals)):
+        #     ret = recur(past_layer, past_layer_idx, new_top_k, memoizer)
+        #     memoizer[(layer, node_layer_idx)] = ret
+        #     all_rets.append(ret)
+        # all_flat = [item for sublist in all_rets for item in sublist]
+        # # Dedpulicate
+
+        # seen = set()
+        # deduped_list = [x for x in all_flat if not (str(x) in seen or seen.add(str(x)))]
+        # deduped_list.sort(key=lambda x: x[1], reverse=True)
+
+        # top_rets = deduped_list[:k]
+        # return top_rets
+
+    # memoizer_per_top = [{} for _ in range(n_to_top_layer)]
+    # top_k_per_top = [recur(top_layer, i, [([i], 0)], memoizer_per_top[i])
+    #                  for i in range(n_to_top_layer)]
+    # top_flat = [item for sublist in top_k_per_top for item in sublist]
+    top_k = recur(top_layer, 0, {})
+    # seen = set()
+    # deduped_list = [x for x in top_flat if not (str(x) in seen or seen.add(str(x)))]
+    top_k.sort(key=lambda x: x[1], reverse=True)
+    sorted = top_k[:k]
+    return sorted
+    # memoizer[(layer, node)] =
     # TODO: return
 
 # We have to implement https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3009499/

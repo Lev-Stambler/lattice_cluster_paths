@@ -162,7 +162,7 @@ def get_optimal_layer_gmm(dataset_np: npt.NDArray, layers: List[str], layer: str
     return gm
 
 
-def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixture], similarity_cutoff=float("-inf")) -> List[List[float]]:
+def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixture], similarity_cutoff=float("-inf")) -> List[List[List[float]]]:
     """
     We will take a bit of a short cut here. Rather than passing *representatives* from each centroid to find the "strength" on the following centroids,
     we will pass the *center* of each centroid to the next layer. This is a simplification, but it should be a good starting point and quite a bit faster.
@@ -343,7 +343,7 @@ def get_dataset(name: str):
 
 class Decomposer:
     gmms: List[GaussianMixture]
-    lattice_scores: List[List[float]]
+    lattice_scores: List[List[List[float]]]
 
     def __init__(self, model_lens, dataset: Dataset, layers: List[str], similarity_cutoff=19):
         self.model_lens = model_lens
