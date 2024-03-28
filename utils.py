@@ -273,19 +273,45 @@ def logit_lens(model, best_feature, dictionary):
     print(topk_values)
 
 
-def top_k_dag_paths_dynamic(layers: List[List[float]], start_layer, top_layer, k, weight='weight'):
+def top_k_dag_paths_dynamic(layers: List[List[List[float]]], start_layer, top_layer, k, weight='weight'):
     assert len(layers) > 1, "Need at least 2 layers"
     assert start_layer < top_layer, "Start layer must be less than top layer"
     assert top_layer < len(layers), "Top layer must be less than the number of layers"
     
     memoizer = {}
 
-    def recur(layer: int, node: int, PQ):
-        if (layer, node) in memoizer:
-            return memoizer[(layer, node)]
+    def recur(layer: int, node_layer_idx: int, top_k_per_layer):
+        if (layer, node_layer_idx) in memoizer:
+            return memoizer[(layer, node_layer_idx)]
 
-        raise NotImplementedError
+        # Base case
+        if layer == 0:
+            return top_k_per_layer[layer]
+
+        past_layer = layer - 1
+        past_layer_vals = layers[past_layer]
+
+        # Get the inbound values
+        vs = [s[node_layer_idx] for s in past_layer_vals]
+
+        new_top_k = []
+        for i, v in enumerate(vs):
+            for (node_path, val) in top_k_per_layer[layer]:
+                new_top_k.append(([i] + [node_path], v + val))
+
+        new_top_k.sort(key=lambda x: x[1], reverse=True)[:k]
+
+        all_rets = []
+        for past_layer_idx in range(len(past_layer_vals)):
+            ret = recur(past_layer, past_layer_idx, new_top_k)
+            memoizer[(layer, node_layer_idx)] = ret
+            all_rets.append(ret)
+        all_flat = [item for sublist in all_rets for item in sublist]
+        top_rets = all_flat.sort(key=lambda x: x[1], reverse=True)[:k]
+
+        return top_rets
         # memoizer[(layer, node)] = 
+    # TODO: return
 
 # We have to implement https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3009499/
 
