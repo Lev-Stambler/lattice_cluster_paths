@@ -18,8 +18,8 @@ DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 N_DIMS = 512
 SEED = 69_420
 N_DATASIZE = 8_000
-#N_CLUSTERS_MIN = int(0.5 * N_DIMS)
-#N_CLUSTERS_MAX = 10 * N_DIMS
+# N_CLUSTERS_MIN = int(0.5 * N_DIMS)
+# N_CLUSTERS_MAX = 10 * N_DIMS
 N_CLUSTERS = int(N_DIMS)
 # TODO: CHANGE BACK TO 6/ MAKE THIS A PARAM
 N_BLOCKS = 2
@@ -88,18 +88,20 @@ def GMM_method(dataset: torch.Tensor, layer: int, n_clusters_min=N_CLUSTERS_MIN,
         print("Loading GMM clusters from cache")
         gm = GaussianMixture(n_components=n_clusters_min, n_features=N_DIMS)
         gm.load_state_dict(torch.load(gm_name, map_location=DEFAULT_DEVICE))
-        return gm
+        return gm.to(device=DEFAULT_DEVICE)
 
     # TODO: bin search
     for n_clusters in range(n_clusters_min, n_clusters_max, skip):
         print(f"Trying {n_clusters} clusters")
-        gm = GaussianMixture(n_components=n_clusters_min, n_features=N_DIMS)
+        gm = GaussianMixture(n_components=n_clusters_min,
+                             n_features=N_DIMS).to(device=DEFAULT_DEVICE)
         gm.fit(dataset.to(DEFAULT_DEVICE))
         torch.save(gm.state_dict(), gm_name)
         # pickle.dump(gm, open(gm_name, 'wb'))
         # silhouette_avg = silhouette_score(dataset, gm_name)
         # print(f"Silhouette score: {silhouette_avg}")
         return gm
+
 
 def forward_pass(model_lens: transformer_lens.HookedTransformer, t: str, layer: str) -> torch.Tensor:
     with torch.no_grad():
@@ -121,8 +123,10 @@ def get_per_layer_emb_dataset(model_lens: transformer_lens.HookedTransformer, da
             # TODO: we can use batching
             dataset_torch_non_flat = [forward_pass(model_lens, t, layer).squeeze(
                 0).detach() for t in dataset]
-            dataset_torch = torch.stack([d for ds in dataset_torch_non_flat for d in ds])
-            if use_save: torch.save(dataset_torch, ds_name)
+            dataset_torch = torch.stack(
+                [d for ds in dataset_torch_non_flat for d in ds])
+            if use_save:
+                torch.save(dataset_torch, ds_name)
         layers_out.append(dataset_torch)
     return torch.stack(layers_out, axis=0)
 
@@ -205,7 +209,7 @@ def cluster_model_lattice(model_lens, ds: torch.Tensor, gmms: List[GaussianMixtu
     return cluster_scores
 
 
-#def to_nx_graph(cluster_scores: List[List[npt.NDArray]]) -> nx.DiGraph:
+# def to_nx_graph(cluster_scores: List[List[npt.NDArray]]) -> nx.DiGraph:
 #    SCALING_RESOLUTION = 1000
 #    node_idx = 0
 #    source = 0
@@ -254,8 +258,8 @@ def cluster_model_lattice(model_lens, ds: torch.Tensor, gmms: List[GaussianMixtu
 
 # TODO: make this batched
 def score_tokens_for_path(embd_dataset: torch.Tensor,
-                                path: List[int], gmms: List[GaussianMixture],
-                                score_weighting_per_layer: npt.NDArray, top_n=20):
+                          path: List[int], gmms: List[GaussianMixture],
+                          score_weighting_per_layer: npt.NDArray, top_n=20):
     """
     embd_dataset: The outer index corresponds to the layer, the inner index corresponds to the token
     """
@@ -332,7 +336,7 @@ class Decomposer:
         self.lattice_scores = cluster_model_lattice(
             self.model_lens, self.dataset, self.gmms, self.similarity_cutoff)
 
-    def score(self, to_score: List[str], score_path = [8, 57, 89], embeds: Union[npt.NDArray, None] = None) -> List[List[float]]:
+    def score(self, to_score: List[str], score_path=[8, 57, 89], embeds: Union[npt.NDArray, None] = None) -> List[List[float]]:
         if embeds is None:
             embeds = get_per_layer_emb_dataset(
                 self.model_lens, to_score, self.layers, use_save=False)
@@ -366,7 +370,7 @@ class Decomposer:
         for k in ks:
             s = item_to_scores[k]
             final_scores.append(s)
-        
+
         return final_scores
 
 
@@ -418,3 +422,9 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+"""
+TODO:
+to make things efficient, we only want to have a layer's embedding on Torch
+**when** we need it.
+"""
