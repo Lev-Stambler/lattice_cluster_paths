@@ -276,7 +276,7 @@ def logit_lens(model, best_feature, dictionary):
 def top_k_dag_paths_dynamic(layers: List[List[List[float]]], k: int, top_layer: int = None):
     n_to_top_layer = len(layers[-1][0])
     layers = layers + [
-        [[0.0] for _ in range(n_to_top_layer)]
+        [[0] for _ in range(n_to_top_layer)]
     ]
 
     if top_layer is None:
@@ -293,7 +293,7 @@ def top_k_dag_paths_dynamic(layers: List[List[List[float]]], k: int, top_layer: 
         # Base case
         if layer == 0:
             # TODO: RETURN SOMETHING HERE
-            return [([-1], 0)]
+            return [([node_layer_idx], 0)]
 
         past_layer = layer - 1
         past_layer_vals = layers[past_layer]
@@ -312,40 +312,18 @@ def top_k_dag_paths_dynamic(layers: List[List[List[float]]], k: int, top_layer: 
         seen = set()
         deduped_list = [x for x in paths if not (str(x) in seen or seen.add(str(x)))]
         deduped_list.sort(key=lambda x: x[1], reverse=True)
-        deduped_list = paths[:k]
-        memoizer[(layer, node_layer_idx)] = deduped_list
+        cutoff = min(k, len(deduped_list))
+        deduped_list = paths[:cutoff]
+        # TODO: do we need to make a copy?
+        memoizer[(layer, node_layer_idx)] = deduped_list# [d for d in deduped_list]
         return deduped_list
 
-        #         # print(node_path, val)
-        #         new_top_k.append(([i] + node_path, v + val))
-
-        # new_top_k.sort(key=lambda x: x[1], reverse=True)
-        # new_top_k = new_top_k[:k]
-
-        # all_rets = []
-        # for past_layer_idx in range(len(past_layer_vals)):
-        #     ret = recur(past_layer, past_layer_idx, new_top_k, memoizer)
-        #     memoizer[(layer, node_layer_idx)] = ret
-        #     all_rets.append(ret)
-        # all_flat = [item for sublist in all_rets for item in sublist]
-        # # Dedpulicate
-
-        # seen = set()
-        # deduped_list = [x for x in all_flat if not (str(x) in seen or seen.add(str(x)))]
-        # deduped_list.sort(key=lambda x: x[1], reverse=True)
-
-        # top_rets = deduped_list[:k]
-        # return top_rets
-
-    # memoizer_per_top = [{} for _ in range(n_to_top_layer)]
-    # top_k_per_top = [recur(top_layer, i, [([i], 0)], memoizer_per_top[i])
-    #                  for i in range(n_to_top_layer)]
-    # top_flat = [item for sublist in top_k_per_top for item in sublist]
     top_k = recur(top_layer, 0, {})
     # seen = set()
     # deduped_list = [x for x in top_flat if not (str(x) in seen or seen.add(str(x)))]
     top_k.sort(key=lambda x: x[1], reverse=True)
-    sorted = top_k[:k]
+    cutoff = min(k, len(top_k))
+    sorted = top_k[:cutoff]
     return sorted
     # memoizer[(layer, node)] =
     # TODO: return
