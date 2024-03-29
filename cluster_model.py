@@ -360,7 +360,7 @@ class Decomposer:
         self.lattice_scores = cluster_model_lattice(
             self.model_lens, self.dataset, self.gmms, self.similarity_cutoff)
 
-    def score(self, to_score: List[str], score_path = [8, 57, 89], embeds: Union[npt.NDArray, None] = None):
+    def score(self, to_score: List[str], score_path = [8, 57, 89], embeds: Union[npt.NDArray, None] = None) -> List[List[float]]:
         if embeds is None:
             embeds = get_per_layer_emb_dataset(
                 self.model_lens, to_score, self.layers, use_save=False)
