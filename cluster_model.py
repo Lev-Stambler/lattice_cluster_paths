@@ -301,9 +301,9 @@ def cutoff_lattice(lattice: List[List[List[float]]], related_cutoff = 1):
     return r
 
 def restrict_to_related_vertex(lattice: List[List[List[float]]], layer: int, idx: int, rel_cutoff: float) -> List[int]:
-    c_lattice = cutoff_lattice(lattice, related_cutoff=rel_cutoff)
+    c_lattice = lattice #cutoff_lattice(lattice, related_cutoff=rel_cutoff)
     below_layers = range(layer)[::-1]
-    above_layers = range(layer + 1, len(c_lattice))
+    above_layers = range(layer + 1, len(c_lattice) + 1)
 
     lattice_below = []
     curr_idx_set = [idx]
@@ -313,32 +313,32 @@ def restrict_to_related_vertex(lattice: List[List[List[float]]], layer: int, idx
         for i, node in enumerate(below_layer):
             has_support = False
             for c in curr_idx_set: # Check if there is outgoing support
-                if node[c] > 0:
+                if node[c] > rel_cutoff:
                     has_support = True
                     break
             if has_support:
-                new_layer.append((i, node[idx]))
-        lattice_below = new_layer + lattice_below
+                new_layer.append((i, node[c]))
+        lattice_below = [new_layer] + lattice_below
         curr_idx_set = [i for i, _ in new_layer]
     
     curr_idx_set = [idx]
     lattice_above = []
     for above_layer in above_layers:
-        above_layer = c_lattice[above_layer]
+        curr_layer = c_lattice[above_layer - 1]
         new_layer = []
-        for i, node in enumerate(above_layer):
-            has_support = False
-            for c in curr_idx_set: # Check if the next layer has incoming support from c
-                if node[c] > 0:
-                    has_support = True
-                    break
-            if has_support:
-                new_layer.append((i, node[idx]))
-        lattice_above += new_layer
-        curr_idx_set = [i for i, _ in new_layer]
 
-    return lattice_below + [(idx, 1)] + lattice_above
+        for c in curr_idx_set:
+            for i, val in enumerate(curr_layer[c]):
+                if val > rel_cutoff:
+                    new_layer.append((i, val))
+
+        # TODO: DEDUP!
+        curr_idx_set = [i for i, _ in new_layer]
+        lattice_above = lattice_above + [new_layer]
+
+    return lattice_below + [[(idx, 1)]] + lattice_above
     
+
 # TODO: make this batched
 def score_tokens_for_path(embd_dataset: npt.NDArray,
                           path: List[int], gmms: List[KMeansMixture],
@@ -362,7 +362,6 @@ def score_tokens_for_path(embd_dataset: npt.NDArray,
                 tok[layer]
             ).to(device=DEFAULT_DEVICE))
             similarity_metric =  probs[path[layer]]
-            print("PROBS MAX", max(probs), "PROBS PATH", similarity_metric)
 
             score += similarity_metric * score_weighting_per_layer[layer]
         scores[i] = score
