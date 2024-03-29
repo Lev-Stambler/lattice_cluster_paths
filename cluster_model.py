@@ -29,8 +29,8 @@ MODEL_NAME = 'EleutherAI/pythia-70m'
 DATASET_NAME = 'NeelNanda/pile-10k'
 
 DEBUG_N_DATASIZE = 70
-DEBUG_N_CLUSTERS_MIN = 40
-DEBUG_N_CLUSTERS_MAX = 41
+DEBUG_N_CLUSTERS_MIN = 20
+DEBUG_N_CLUSTERS_MAX = 21
 
 # DEBUG_N_CLUSTERS_MIN = 10
 # DEBUG_N_CLUSTERS_MAX = 20
@@ -144,7 +144,7 @@ def get_optimal_layer_gmm(dataset_np: npt.NDArray, layers: List[str], layer: str
     For a specific layer, find the optimal number of clusters: TODO document some references for this is actually done
     Then, return the found centroids for each cluster
     """
-    dataset_torch = torch.tensor(dataset_np).to(DEFAULT_DEVICE)
+    dataset_torch = torch.tensor(dataset_np).to(device=DEFAULT_DEVICE)
     print(
         f"Finding optimal number of clusters and such clusters for layer {layer}")
     layer_idx = layers.index(layer)
@@ -341,11 +341,13 @@ class Decomposer:
         self.similarity_cutoff = similarity_cutoff
         self.gmms = []
         self.lattice_scores = None
+        self.labs = [get_block_out_label(i) for i in range(N_BLOCKS)]
+        self.ds_emb = get_per_layer_emb_dataset(self.model_lens, self.dataset, self.labs)
 
     def load(self):
         for i in range(len(self.layers)):
             self.gmms.append(get_optimal_layer_gmm(
-                self.dataset, self.layers, self.layers[i]))
+                self.ds_emb, self.layers, self.layers[i]))
         self.lattice_scores = cluster_model_lattice(
             self.model_lens, self.dataset, self.gmms, self.similarity_cutoff)
 
