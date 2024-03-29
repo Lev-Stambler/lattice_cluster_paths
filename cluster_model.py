@@ -190,9 +190,9 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixtur
         for tok_idx in range(0, ds.shape[0], BS):
             tok = ds[tok_idx:tok_idx + BS]
             high_weight_currs = torch.nonzero(gmms[curr_layer_idx].predict_proba(
-                torch.tensor(tok[:, curr_layer_idx])) > HIGH_WEIGHT_PROB, as_tuple=True)
+                torch.tensor(tok[:, curr_layer_idx]).to(device=DEFAULT_DEVICE)) > HIGH_WEIGHT_PROB, as_tuple=True)
             high_weight_nexts = np.nonzero(gmms[next_layer_idx].predict_proba(
-                torch.tensor(tok[:, next_layer_idx])) > HIGH_WEIGHT_PROB, as_tuple=True)
+                torch.tensor(tok[:, next_layer_idx]).to(device=DEFAULT_DEVICE)) > HIGH_WEIGHT_PROB, as_tuple=True)
             # print("WITH BATCH", high_weight_currs, high_weight_nexts)
             for i in range(BS):
                 col_idxs_curr = np.nonzero(high_weight_currs[0] == i)[0]
