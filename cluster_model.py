@@ -349,7 +349,7 @@ class Decomposer:
             self.gmms.append(get_optimal_layer_gmm(
                 self.ds_emb, self.layers, self.layers[i]))
         self.lattice_scores = cluster_model_lattice(
-            self.model_lens, self.dataset, self.gmms, self.similarity_cutoff)
+            self.model_lens, self.ds_emb, self.gmms, self.similarity_cutoff)
 
     def score(self, to_score: List[str], score_path=[8, 57, 89], embeds: Union[npt.NDArray, None] = None) -> List[List[float]]:
         if embeds is None:
