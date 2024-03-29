@@ -122,7 +122,7 @@ def get_per_layer_emb_dataset(model_lens: transformer_lens.HookedTransformer, da
         # TODO: DOES THIS WORK?
         if os.path.exists(ds_name) and use_save:
             print(f"Loading dataset from cache to device {DEFAULT_DEVICE}")
-            dataset_torch = torch.load(ds_name, map_location=DEFAULT_DEVICE)
+            dataset_torch = torch.load(ds_name, map_location='cpu')
         else:
             # TODO: think about this in terms of flattening the dataset
             # TODO: we can use batching
@@ -136,7 +136,7 @@ def get_per_layer_emb_dataset(model_lens: transformer_lens.HookedTransformer, da
         del dataset_torch
         torch.cuda.empty_cache()
         layers_out.append(np_ver)
-    return layers_out
+    return np.stack(layers_out, axis=0)
 
 
 def get_optimal_layer_gmm(dataset_np: npt.NDArray, layers: List[str], layer: str) -> List[npt.NDArray[np.float64]]:
