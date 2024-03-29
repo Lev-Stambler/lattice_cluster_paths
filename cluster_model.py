@@ -13,7 +13,7 @@ import utils
 
 
 DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-DEFAULT_DEVICE = 'cpu'
+# DEFAULT_DEVICE = 'cpu'
 # TODO: not global var
 N_DIMS = 512
 SEED = 69_420
