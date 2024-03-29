@@ -6,19 +6,21 @@ import numpy as np
 import numpy.typing as npt
 import torch
 import transformer_lens
-from sklearn.mixture import GaussianMixture
+from gmm import GaussianMixture
 import hashlib
 import networkx as nx
 import utils
 
 
 DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+DEFAULT_DEVICE = 'cpu'
 # TODO: not global var
 N_DIMS = 512
 SEED = 69_420
-N_DATASIZE = 10_000
-N_CLUSTERS_MIN = int(0.5 * N_DIMS)
-N_CLUSTERS_MAX = 10 * N_DIMS
+N_DATASIZE = 8_000
+#N_CLUSTERS_MIN = int(0.5 * N_DIMS)
+#N_CLUSTERS_MAX = 10 * N_DIMS
+N_CLUSTERS = int(N_DIMS)
 # TODO: CHANGE BACK TO 6/ MAKE THIS A PARAM
 N_BLOCKS = 2
 N_TOKENS_CUTOFF = 100
@@ -50,13 +52,13 @@ def create_param_tag():
     return m.hexdigest()[:40]
 
 
-def similarity_metric(a: npt.NDArray, b: npt.NDArray):
-    return np.sum(np.exp(np.multiply(a, b)))
+def similarity_metric(a: torch.Tensor, b: torch.Tensor):
+    return torch.sum(torch.exp(torch.multiply(a, b)))
 
 
-def similarity_for_gmm(gmm: GaussianMixture, a: npt.NDArray, b: npt.NDArray):
-    preds_a = gmm.predict_proba(a.expand_dims(0))
-    preds_b = gmm.predict_proba(b.expand_dims(0))
+def similarity_for_gmm(gmm: GaussianMixture, a: torch.Tensor, b: torch.Tensor):
+    preds_a = gmm.predict_proba(a.unsqueeze(0))
+    preds_b = gmm.predict_proba(b.unsqueeze(0))
     return similarity_metric(preds_a, preds_b)
     # return np.inner(a, b)
 
@@ -78,77 +80,54 @@ def forward_on_block(model, block_idx: int, data: npt.NDArray):
 
 
 # TODO: optimize numb of clusters
-def GMM_method(dataset: npt.NDArray, layer: int, n_clusters_min=N_CLUSTERS_MIN, n_clusters_max=N_CLUSTERS_MAX, skip=30) -> GaussianMixture:
+def GMM_method(dataset: torch.Tensor, layer: int, n_clusters_min=N_CLUSTERS_MIN, n_clusters_max=N_CLUSTERS_MAX, skip=30) -> GaussianMixture:
     gm_name = get_save_tag(f'{layer}_clusters_GMM')
+    torch.manual_seed(SEED)
+
     if os.path.exists(gm_name):
         print("Loading GMM clusters from cache")
-        gmm = pickle.load(open(gm_name, 'rb'))
-        return gmm
+        gm = GaussianMixture(n_components=n_clusters_min, n_features=N_DIMS)
+        gm.load_state_dict(torch.load(gm_name, map_location=DEFAULT_DEVICE))
+        return gm
 
     # TODO: bin search
     for n_clusters in range(n_clusters_min, n_clusters_max, skip):
         print(f"Trying {n_clusters} clusters")
-        gm = GaussianMixture(n_components=n_clusters_min,
-                             random_state=SEED).fit(dataset)
-        pickle.dump(gm, open(gm_name, 'wb'))
+        gm = GaussianMixture(n_components=n_clusters_min, n_features=N_DIMS)
+        gm.fit(dataset)
+        torch.save(gm.state_dict(), gm_name)
+        # pickle.dump(gm, open(gm_name, 'wb'))
         # silhouette_avg = silhouette_score(dataset, gm_name)
         # print(f"Silhouette score: {silhouette_avg}")
         return gm
 
-# def kmeans_silhouette_method(dataset: npt.NDArray, layer: int, n_clusters_min=N_CLUSTERS_MIN, n_clusters_max=N_CLUSTERS_MAX, skip=30):
-#     tests = range(n_clusters_min, n_clusters_max, skip)
-#     opt_sil = -1
-#     opt_clusters = None
-
-#     cluster_name = get_save_tag(f'{layer}_clusters')
-#     if os.path.exists(cluster_name):
-#         print("Loading KMeans clusters from cache")
-#         return pickle.load(open(cluster_name, 'rb'))
-
-#     # TODO: more like bin search
-#     for n_clusters in tests:
-#         print(f"Trying {n_clusters} clusters")
-#         # TODO: would be nice to be a non-mini-batch
-#         clusterer = MiniBatchKMeans(n_clusters=n_clusters, random_state=SEED)
-#         cluster_labels = clusterer.fit_predict(dataset)
-#         silhouette_avg = silhouette_score(dataset, cluster_labels)
-
-#         if silhouette_avg > opt_sil:
-#             print(
-#                 f"Found better silhouette score: {silhouette_avg} with {n_clusters} clusters")
-#             opt_sil = silhouette_avg
-#             opt_clusters = clusterer.cluster_centers_
-
-#     pickle.dump(opt_clusters, open(cluster_name, 'wb'))
-#     return opt_clusters
-
-
-def forward_pass(model_lens: transformer_lens.HookedTransformer, t: str, layer: str) -> npt.NDArray[np.float64]:
+def forward_pass(model_lens: transformer_lens.HookedTransformer, t: str, layer: str) -> torch.Tensor:
     with torch.no_grad():
         return model_lens.run_with_cache(t)[1][layer]
 
 
 # TODO: we should have better labeling!!
-def get_per_layer_emb_dataset(model_lens: transformer_lens.HookedTransformer, dataset: Dataset, layers: List[str], use_save=True) -> List[npt.NDArray[np.float64]]:
+def get_per_layer_emb_dataset(model_lens: transformer_lens.HookedTransformer, dataset: Dataset, layers: List[str], use_save=True) -> List[torch.Tensor]:
     layers_out = []
     for layer in layers:
         ds_name = get_save_tag(f'{layer}_dataset_embd')
 
         # TODO: DOES THIS WORK?
         if os.path.exists(ds_name) and use_save:
-            print("Loading dataset from cache")
-            dataset_np = pickle.load(open(ds_name, 'rb'))
+            print(f"Loading dataset from cache to device {DEFAULT_DEVICE}")
+            dataset_torch = torch.load(ds_name, map_location=DEFAULT_DEVICE)
         else:
             # TODO: think about this in terms of flattening the dataset
-            dataset_np_non_flat = [list(forward_pass(model_lens, t, layer).squeeze(
-                0).detach().cpu().numpy()) for t in dataset]
-            dataset_np = [d for ds in dataset_np_non_flat for d in ds]
-            if use_save: pickle.dump(dataset_np, open(ds_name, 'wb'))
-        layers_out.append(dataset_np)
-    return np.stack(layers_out, axis=0)
+            # TODO: we can use batching
+            dataset_torch_non_flat = [forward_pass(model_lens, t, layer).squeeze(
+                0).detach() for t in dataset]
+            dataset_torch = torch.stack([d for ds in dataset_torch_non_flat for d in ds])
+            if use_save: torch.save(dataset_torch, ds_name)
+        layers_out.append(dataset_torch)
+    return torch.stack(layers_out, axis=0)
 
 
-def get_optimal_layer_gmm(dataset_np: npt.NDArray, layers: List[str], layer: str) -> List[npt.NDArray[np.float64]]:
+def get_optimal_layer_gmm(dataset_torch: torch.Tensor, layers: List[str], layer: str) -> List[npt.NDArray[np.float64]]:
     """
     For a specific layer, find the optimal number of clusters: TODO document some references for this is actually done
     Then, return the found centroids for each cluster
@@ -158,11 +137,11 @@ def get_optimal_layer_gmm(dataset_np: npt.NDArray, layers: List[str], layer: str
     layer_idx = layers.index(layer)
     # ds_name = f'metadata/{layer}_dataset_embd__SEED_{SEED}__SIZE_{N_DATASIZE}.pkl'
 
-    gm = GMM_method(dataset_np[layer_idx], layer)
+    gm = GMM_method(dataset_torch[layer_idx], layer)
     return gm
 
 
-def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixture], similarity_cutoff=float("-inf")) -> List[List[List[float]]]:
+def cluster_model_lattice(model_lens, ds: torch.Tensor, gmms: List[GaussianMixture], similarity_cutoff=float("-inf")) -> List[List[List[float]]]:
     """
     We will take a bit of a short cut here. Rather than passing *representatives* from each centroid to find the "strength" on the following centroids,
     we will pass the *center* of each centroid to the next layer. This is a simplification, but it should be a good starting point and quite a bit faster.
@@ -197,10 +176,10 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixtur
         BS = 32
         for tok_idx in range(0, ds.shape[0], BS):
             tok = ds[tok_idx:tok_idx + BS]
-            high_weight_currs = np.nonzero(gmms[curr_layer_idx].predict_proba(
-                tok[:, curr_layer_idx]) > HIGH_WEIGHT_PROB)
+            high_weight_currs = torch.nonzero(gmms[curr_layer_idx].predict_proba(
+                tok[:, curr_layer_idx]) > HIGH_WEIGHT_PROB, as_tuple=True)
             high_weight_nexts = np.nonzero(gmms[next_layer_idx].predict_proba(
-                tok[:, next_layer_idx]) > HIGH_WEIGHT_PROB)
+                tok[:, next_layer_idx]) > HIGH_WEIGHT_PROB, as_tuple=True)
             # print("WITH BATCH", high_weight_currs, high_weight_nexts)
             for i in range(BS):
                 col_idxs_curr = np.nonzero(high_weight_currs[0] == i)[0]
@@ -226,55 +205,55 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixtur
     return cluster_scores
 
 
-def to_nx_graph(cluster_scores: List[List[npt.NDArray]]) -> nx.DiGraph:
-    SCALING_RESOLUTION = 1000
-    node_idx = 0
-    source = 0
-    node_idx += 1
-    # We need to account for all outgoing from the end
-    n_clusters = sum([len(cs) for cs in cluster_scores]) + \
-        len(cluster_scores[-1][0])
-    eps = 1e-6
-    most_neg = (min([min([min(c) for c in cs])
-                for cs in cluster_scores])) + eps
-    print(f"Most negative absolute value: {most_neg}")
-    most_neg_abs = abs(most_neg)
-
-    print(f"We have {n_clusters} clusters")
-
-    G = nx.DiGraph()
-    last_layer_start_idx = -1
-    for layer in range(len(cluster_scores)):
-        layer_start_idx = node_idx
-        n_in_layer = len(cluster_scores[layer])
-        if layer == len(cluster_scores) - 1:
-            last_layer_start_idx = layer_start_idx + n_in_layer - 1
-        for _, node_cs in enumerate(cluster_scores[layer]):
-            for j, c in enumerate(node_cs):
-                next_idx = layer_start_idx + n_in_layer + j
-                # TODO: ROUNDING ISSUES?!!?
-                # csgraph[node_idx, next_idx] = round(c)
-                if c + most_neg_abs > 0:
-                    w = round((c + most_neg_abs) * SCALING_RESOLUTION)
-                # print("AAA", w, node_idx, next_idx)
-                G.add_edge(node_idx, next_idx, weight=w)
-            node_idx += 1
-
-    sink = n_clusters
-
-    for i, _ in enumerate(cluster_scores[0]):
-        # Set source to first layer
-        G.add_edge(source, i + 1, weight=1)
-    for i in range(len(cluster_scores[-1])):
-        G.add_edge(last_layer_start_idx + i, sink, weight=1)
-
-    # nx.draw(G, with_labels=True, pos=nx.nx_pydot.graphviz_layout(G, prog='dot'))
-    # plt.savefig("graph.png")
-    return G, source, sink
-
+#def to_nx_graph(cluster_scores: List[List[npt.NDArray]]) -> nx.DiGraph:
+#    SCALING_RESOLUTION = 1000
+#    node_idx = 0
+#    source = 0
+#    node_idx += 1
+#    # We need to account for all outgoing from the end
+#    n_clusters = sum([len(cs) for cs in cluster_scores]) + \
+#        len(cluster_scores[-1][0])
+#    eps = 1e-6
+#    most_neg = (min([min([min(c) for c in cs])
+#                for cs in cluster_scores])) + eps
+#    print(f"Most negative absolute value: {most_neg}")
+#    most_neg_abs = abs(most_neg)
+#
+#    print(f"We have {n_clusters} clusters")
+#
+#    G = nx.DiGraph()
+#    last_layer_start_idx = -1
+#    for layer in range(len(cluster_scores)):
+#        layer_start_idx = node_idx
+#        n_in_layer = len(cluster_scores[layer])
+#        if layer == len(cluster_scores) - 1:
+#            last_layer_start_idx = layer_start_idx + n_in_layer - 1
+#        for _, node_cs in enumerate(cluster_scores[layer]):
+#            for j, c in enumerate(node_cs):
+#                next_idx = layer_start_idx + n_in_layer + j
+#                # TODO: ROUNDING ISSUES?!!?
+#                # csgraph[node_idx, next_idx] = round(c)
+#                if c + most_neg_abs > 0:
+#                    w = round((c + most_neg_abs) * SCALING_RESOLUTION)
+#                # print("AAA", w, node_idx, next_idx)
+#                G.add_edge(node_idx, next_idx, weight=w)
+#            node_idx += 1
+#
+#    sink = n_clusters
+#
+#    for i, _ in enumerate(cluster_scores[0]):
+#        # Set source to first layer
+#        G.add_edge(source, i + 1, weight=1)
+#    for i in range(len(cluster_scores[-1])):
+#        G.add_edge(last_layer_start_idx + i, sink, weight=1)
+#
+#    # nx.draw(G, with_labels=True, pos=nx.nx_pydot.graphviz_layout(G, prog='dot'))
+#    # plt.savefig("graph.png")
+#    return G, source, sink
+#
 
 # TODO: make this batched
-def score_tokens_for_path(embd_dataset: npt.NDArray,
+def score_tokens_for_path(embd_dataset: torch.Tensor,
                                 path: List[int], gmms: List[GaussianMixture],
                                 score_weighting_per_layer: npt.NDArray, top_n=20):
     """
@@ -302,26 +281,19 @@ def score_tokens_for_path(embd_dataset: npt.NDArray,
         scores[i] = score
 
     return scores
-    # sorted_scores = np.argsort(scores)[::-1]
-    # top = []
-    # for i in range(top_n):
-        # idx = sorted_scores[i]
-        # top.append(
-            # (token_to_original_ds[idx], token_to_pos_original_ds[idx], scores[idx]))
-    # return top
 
 
-def find_max_weight(cluster_scores: List[List[npt.NDArray]], K=100):
-    """
-    Find the maximum flow through the lattice
+# def find_max_weight(cluster_scores: List[List[npt.NDArray]], K=100):
+#     """
+#     Find the maximum flow through the lattice
 
-    https://www.usenix.org/conference/atc18/presentation/gong We can find the top K max flows with the "Heavy Keeper" Algorithm
-    """
-    G, source, sink = to_nx_graph(cluster_scores)
-    paths = utils.top_k_paths_to_end(G, source, sink, K)
-    # paths = utils.find_top_k_paths(G, source, sink, K)
-    print("GOT PATHS", paths)
-    return None, G
+#     https://www.usenix.org/conference/atc18/presentation/gong We can find the top K max flows with the "Heavy Keeper" Algorithm
+#     """
+#     G, source, sink = to_nx_graph(cluster_scores)
+#     paths = utils.top_k_paths_to_end(G, source, sink, K)
+#     # paths = utils.find_top_k_paths(G, source, sink, K)
+#     print("GOT PATHS", paths)
+    # return None, G
 
 
 def get_transformer(name: str, device=DEFAULT_DEVICE):
@@ -418,7 +390,7 @@ def main():
         gmms.append(gmm)
 
     lattice = cluster_model_lattice(model, ds_emb, gmms, similarity_cutoff=19)
-    max_flow = find_max_weight(lattice)
+    # max_flow = find_max_weight(lattice)
 
     token_to_original_ds = []
     token_to_pos_original_ds = []
@@ -435,13 +407,13 @@ def main():
     assert len(token_to_original_ds) == len(
         token_to_pos_original_ds) == ds_emb.shape[1]
 
-    highest = score_tokens_for_path(
+    scores = score_tokens_for_path(
         token_to_pos_original_ds=token_to_pos_original_ds,
         token_to_original_ds=token_to_original_ds,
         embd_dataset=ds_emb, path=[8, 57, 89],
         gmms=gmms, score_weighting_per_layer=np.array([1, 1, 1]), top_n=20)
-    print(highest)
-    return max_flow, highest
+    print(scores)
+    return scores
 
 
 if __name__ == '__main__':
