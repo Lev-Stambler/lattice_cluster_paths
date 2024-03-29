@@ -179,7 +179,7 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixtur
         # TODO: USING INNER PRODUCT RN
         """
         print("Getting scores for layers", curr_layer_idx, "to", next_layer_idx)
-        HIGH_WEIGHT_PROB = 0.5
+        # HIGH_WEIGHT_PROB = 0.5
 
         to_next_layer_sim = np.zeros(
             (gmms[curr_layer_idx].n_components, gmms[next_layer_idx].n_components), dtype=int)
@@ -189,25 +189,43 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixtur
         BS = 32
         for tok_idx in range(0, ds.shape[0], BS):
             tok = ds[tok_idx:tok_idx + BS]
-            high_weight_currs = torch.nonzero(gmms[curr_layer_idx].predict_proba(
-                torch.tensor(tok[:, curr_layer_idx]).to(device=DEFAULT_DEVICE)) > HIGH_WEIGHT_PROB, as_tuple=True)
-            high_weight_nexts = torch.nonzero(gmms[next_layer_idx].predict_proba(
-                torch.tensor(tok[:, next_layer_idx]).to(device=DEFAULT_DEVICE)) > HIGH_WEIGHT_PROB, as_tuple=True)
-            # print("WITH BATCH", high_weight_currs, high_weight_nexts)
-            for i in range(BS):
-                col_idxs_curr = np.nonzero(
-                    high_weight_currs[0].detach().cpu().numpy() == i)[0]
-                col_idxs_next = np.nonzero(
-                    high_weight_nexts[0].detach().cpu().numpy() == i)[0]
+            pred_curr = torch.nan_to_num(gmms[curr_layer_idx].predict_proba(
+                torch.tensor(tok[:, curr_layer_idx]).to(device=DEFAULT_DEVICE)))
+            pred_next = torch.nan_to_num(gmms[next_layer_idx].predict_proba(
+                torch.tensor(tok[:, next_layer_idx]).to(device=DEFAULT_DEVICE)))
 
-                high_weight_curr = high_weight_currs[1][col_idxs_curr].detach(
-                ).cpu().numpy()
-                high_weight_next = high_weight_nexts[1][col_idxs_next].detach(
-                ).cpu().numpy()
-                # print("INDEP", high_weight_curr, high_weight_next)
-                for x in high_weight_curr:
-                    for y in high_weight_next:
-                        to_next_layer_sim[x, y] += 1
+
+			# TODO: does this give us correlation??
+            # TODO: prob way to use batching here
+            print(pred_curr.shape, pred_next.shape)
+            for i in range(BS):
+                for c1, pred_on_curr in enumerate(pred_curr[i]):
+                    for c2, pred_on_next in enumerate(pred_next[i]):
+                        to_next_layer_sim[c1, c2] += pred_on_next * pred_on_curr
+
+            # return to_next_layer_sim
+
+            # # print("PRED CURR", pred_curr)
+            # high_weight_currs = torch.nonzero(
+            #     pred_curr > HIGH_WEIGHT_PROB, as_tuple=True)
+
+            # high_weight_nexts = torch.nonzero(
+            #     pred_next > HIGH_WEIGHT_PROB, as_tuple=True)
+            # # print("WITH BATCH", high_weight_currs, high_weight_nexts)
+            # for i in range(BS):
+            #     col_idxs_curr = np.nonzero(
+            #         high_weight_currs[0].detach().cpu().numpy() == i)[0]
+            #     col_idxs_next = np.nonzero(
+            #         high_weight_nexts[0].detach().cpu().numpy() == i)[0]
+
+            #     high_weight_curr = high_weight_currs[1][col_idxs_curr].detach(
+            #     ).cpu().numpy()
+            #     high_weight_next = high_weight_nexts[1][col_idxs_next].detach(
+            #     ).cpu().numpy()
+            #     # print("INDEP", high_weight_curr, high_weight_next)
+            #     for x in high_weight_curr:
+            #         for y in high_weight_next:
+            #             to_next_layer_sim[x, y] += 1
         return to_next_layer_sim
 
     cluster_scores = []
@@ -335,6 +353,7 @@ class Decomposer:
     lattice_scores: List[List[List[float]]]
 
     def __init__(self, model_lens, dataset: Dataset, layers: List[str], similarity_cutoff=19):
+        torch.manual_seed(SEED)
         self.model_lens = model_lens
         self.dataset = dataset
         self.layers = layers
@@ -342,7 +361,8 @@ class Decomposer:
         self.gmms = []
         self.lattice_scores = None
         self.labs = [get_block_out_label(i) for i in range(N_BLOCKS)]
-        self.ds_emb = get_per_layer_emb_dataset(self.model_lens, self.dataset, self.labs)
+        self.ds_emb = get_per_layer_emb_dataset(
+            self.model_lens, self.dataset, self.labs)
 
     def load(self):
         for i in range(len(self.layers)):
