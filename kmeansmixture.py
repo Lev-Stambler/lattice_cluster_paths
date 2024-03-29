@@ -1,0 +1,73 @@
+import torch
+import numpy as np
+from kmeans_pytorch import kmeans
+
+# data
+data_size, dims, num_clusters = 1000, 2, 3
+x = np.random.randn(data_size, dims) / 6
+x = torch.from_numpy(x)
+
+# kmeans
+cluster_ids_x, cluster_centers = kmeans(
+    X=x, num_clusters=num_clusters, distance='euclidean', device=torch.device('cuda:0')
+)
+
+
+class KMeansMixture(torch.nn.Module):
+    """
+    """
+
+    def __init__(self, n_components, n_features):
+        super(KMeansMixture, self).__init__()
+
+        self.n_components = n_components
+        self.n_features = n_features
+
+        self._init_params()
+
+    def _init_params(self):
+        pass
+
+    def fit(self, x: torch.Tensor, delta=1e-3, n_iter=100, warm_start=False):
+        """
+        Fits model to the data.
+        args:
+            x:          torch.Tensor (n, d) or (n, k, d)
+        options:
+            delta:      float
+            n_iter:     int
+            warm_start: bool
+        """
+        print("USING DEVICE", x.device)
+        cluster_ids_x, cluster_centers = kmeans(
+            X=x, num_clusters=self.n_components,
+            distance='euclidean', device=x.device
+        )
+        print("CLUSTER SHAPE", cluster_centers.shape)
+        self.mu = cluster_centers
+
+    def check_size(self, x):
+        if len(x.size()) == 2:
+            # (n, d) --> (n, 1, d)
+            x = x.unsqueeze(1)
+
+        return x
+
+    def predict_proba(self, x):
+        """
+        Returns normalized probabilities of class membership.
+        args:
+            x:          torch.Tensor (n, d) or (n, 1, d)
+        returns:
+            y:          torch.LongTensor (n)
+        """
+        x = self.check_size(x)
+
+        diff = x - self.mu.unsqueeze(0)
+
+        # Calculate squared distances (Euclidean)
+        squared_distances = (diff ** 2).sum(-1)
+        distances = squared_distances.sqrt()
+        inverse_distances = 1.0 / distances
+        probabilities = inverse_distances / np.sum(inverse_distances, axis=1, keepdims=True)
+        return probabilities

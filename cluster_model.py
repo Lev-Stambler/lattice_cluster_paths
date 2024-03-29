@@ -6,7 +6,8 @@ import numpy as np
 import numpy.typing as npt
 import torch
 import transformer_lens
-from gmm import GaussianMixture
+# from gmm import GaussianMixture
+from kmeansmixture import KMeansMixture
 import hashlib
 import networkx as nx
 import utils
@@ -56,7 +57,7 @@ def similarity_metric(a: torch.Tensor, b: torch.Tensor):
     return torch.sum(torch.exp(torch.multiply(a, b)))
 
 
-def similarity_for_gmm(gmm: GaussianMixture, a: torch.Tensor, b: torch.Tensor):
+def similarity_for_gmm(gmm: KMeansMixture, a: torch.Tensor, b: torch.Tensor):
     preds_a = gmm.predict_proba(a.unsqueeze(0))
     preds_b = gmm.predict_proba(b.unsqueeze(0))
     return similarity_metric(preds_a, preds_b)
@@ -80,23 +81,22 @@ def forward_on_block(model, block_idx: int, data: npt.NDArray):
 
 
 # TODO: optimize numb of clusters
-def GMM_method(dataset: torch.Tensor, layer: int, n_clusters_min=N_CLUSTERS_MIN, n_clusters_max=N_CLUSTERS_MAX, skip=30) -> GaussianMixture:
+def GMM_method(dataset: torch.Tensor, layer: int, n_clusters_min=N_CLUSTERS_MIN, n_clusters_max=N_CLUSTERS_MAX, skip=30) -> KMeansMixture:
     gm_name = get_save_tag(f'{layer}_clusters_GMM')
     torch.manual_seed(SEED)
 
     if os.path.exists(gm_name):
         print("Loading GMM clusters from cache")
-        gm = GaussianMixture(n_components=n_clusters_min,
-                             covariance_type='diag',
-                             n_features=N_DIMS)
+        gm = KMeansMixture(n_components=n_clusters_min,
+                           n_features=N_DIMS)
         gm.load_state_dict(torch.load(gm_name, map_location=DEFAULT_DEVICE))
         return gm.to(device=DEFAULT_DEVICE)
 
     # TODO: bin search
     for n_clusters in range(n_clusters_min, n_clusters_max, skip):
         print(f"Trying {n_clusters} clusters for layer {layer}")
-        gm = GaussianMixture(n_components=n_clusters_min, covariance_type='diag',
-                             n_features=N_DIMS).to(device=DEFAULT_DEVICE)
+        gm = KMeansMixture(n_components=n_clusters_min,
+                           n_features=N_DIMS).to(device=DEFAULT_DEVICE)
         torch_ds = dataset.to(DEFAULT_DEVICE)
         gm.fit(torch_ds)
         del torch_ds
@@ -154,7 +154,7 @@ def get_optimal_layer_gmm(dataset_np: npt.NDArray, layers: List[str], layer: str
     return gm
 
 
-def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixture], similarity_cutoff=float("-inf")) -> List[List[List[float]]]:
+def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[KMeansMixture], similarity_cutoff=float("-inf")) -> List[List[List[float]]]:
     """
     We will take a bit of a short cut here. Rather than passing *representatives* from each centroid to find the "strength" on the following centroids,
     we will pass the *center* of each centroid to the next layer. This is a simplification, but it should be a good starting point and quite a bit faster.
@@ -194,11 +194,10 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixtur
             pred_next = torch.nan_to_num(gmms[next_layer_idx].predict_proba(
                 torch.tensor(tok[:, next_layer_idx]).to(device=DEFAULT_DEVICE)))
 
-
             batch_size = pred_curr.shape[0]
-			# TODO: does this give us correlation??
+            # TODO: does this give us correlation??
             # TODO: prob way to use batching here
-            # indexing_matrix = 
+            # indexing_matrix =
             for i in range(batch_size):
                 if pred_curr[i].sum() != 0 and pred_next[i].sum() != 0:
                     print("NON TRIVIAL", pred_curr[i], pred_next[i])
@@ -206,8 +205,8 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixtur
                 # Set the corresponding correlations to the matrix
                 to_next_layer_sim += corrs.detach().cpu().numpy()
                 # for c1, pred_on_curr in enumerate(pred_curr[i]):
-                    # for c2, pred_on_next in enumerate(pred_next[i]):
-                        # to_next_layer_sim[c1, c2] += pred_on_next * pred_on_curr
+                # for c2, pred_on_next in enumerate(pred_next[i]):
+                # to_next_layer_sim[c1, c2] += pred_on_next * pred_on_curr
 
             # return to_next_layer_sim
 
@@ -295,7 +294,7 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixtur
 
 # TODO: make this batched
 def score_tokens_for_path(embd_dataset: npt.NDArray,
-                          path: List[int], gmms: List[GaussianMixture],
+                          path: List[int], gmms: List[KMeansMixture],
                           score_weighting_per_layer: npt.NDArray, top_n=20):
     """
     embd_dataset: The outer index corresponds to the layer, the inner index corresponds to the token
@@ -355,7 +354,7 @@ def get_dataset(name: str):
 
 
 class Decomposer:
-    gmms: List[GaussianMixture]
+    gmms: List[KMeansMixture]
     lattice_scores: List[List[List[float]]]
 
     def __init__(self, model_lens, dataset: Dataset, layers: List[str], similarity_cutoff=19):
