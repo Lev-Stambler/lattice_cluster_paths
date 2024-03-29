@@ -360,7 +360,7 @@ class Decomposer:
     def __init__(self, model_lens, dataset: Dataset, layers: List[str], similarity_cutoff=19):
         torch.manual_seed(SEED)
         self.model_lens = model_lens
-        self.dataset = dataset
+        self.dataset = [d[:N_TOKENS_CUTOFF] for d in dataset]
         self.layers = layers
         self.similarity_cutoff = similarity_cutoff
         self.gmms = []
