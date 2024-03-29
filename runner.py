@@ -28,14 +28,6 @@ decomp.load()
 # In[ ]:
 
 
-from cluster_model import find_max_weight
-
-find_max_weight(decomp.lattice_scores, K=20)
-
-
-# In[ ]:
-
-
 import utils
 importlib.reload(utils)
 utils.top_k_dag_paths_dynamic(decomp.lattice_scores, k=200_000)
@@ -44,7 +36,6 @@ utils.top_k_dag_paths_dynamic(decomp.lattice_scores, k=200_000)
 # In[ ]:
 
 
-from circuitsvis.utils.render import RenderedHTML, render
 
 score_path = [8, 57, 89]
 score_path = [10, 63, 89]
@@ -79,6 +70,7 @@ scores_reord = [scores[i] for i in top_args]
 # TODO: SORT!
 
 # TODO sep fun
+from circuitsvis.utils.render import RenderedHTML, render
 html = render(
     "TextNeuronActivations",
     tokens=tokens_reord,
