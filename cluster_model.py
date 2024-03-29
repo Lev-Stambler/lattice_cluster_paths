@@ -30,8 +30,8 @@ MODEL_NAME = 'EleutherAI/pythia-70m'
 DATASET_NAME = 'NeelNanda/pile-10k'
 
 DEBUG_N_DATASIZE = 1_000
-DEBUG_N_CLUSTERS_MIN = 50
-DEBUG_N_CLUSTERS_MAX = 51
+DEBUG_N_CLUSTERS_MIN = 100
+DEBUG_N_CLUSTERS_MAX = 101
 
 # DEBUG_N_CLUSTERS_MIN = 10
 # DEBUG_N_CLUSTERS_MAX = 20
@@ -405,9 +405,16 @@ class Decomposer:
 
     def __init__(self, model_lens, dataset: Dataset, layers: List[str], similarity_cutoff=19):
         torch.manual_seed(SEED)
+        np.random.seed(SEED)
         self.model_lens = model_lens
         # TODO: cutoff in random position
-        self.dataset = [d[:N_TOKENS_CUTOFF] for d in dataset]
+        def get_random_cutoff(t: str):
+            if len(t) < N_TOKENS_CUTOFF:
+                return t
+            start_r = np.random.randint(0, len(t) - N_TOKENS_CUTOFF)
+            end = start_r + N_TOKENS_CUTOFF
+            return t[start_r:end]
+        self.dataset = [get_random_cutoff(d) for d in dataset]
         self.layers = layers
         self.similarity_cutoff = similarity_cutoff
         self.gmms = []
