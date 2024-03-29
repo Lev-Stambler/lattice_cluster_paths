@@ -86,16 +86,21 @@ def GMM_method(dataset: torch.Tensor, layer: int, n_clusters_min=N_CLUSTERS_MIN,
 
     if os.path.exists(gm_name):
         print("Loading GMM clusters from cache")
-        gm = GaussianMixture(n_components=n_clusters_min, n_features=N_DIMS)
+        gm = GaussianMixture(n_components=n_clusters_min,
+                             covariance_type='diag',
+                             n_features=N_DIMS)
         gm.load_state_dict(torch.load(gm_name, map_location=DEFAULT_DEVICE))
         return gm.to(device=DEFAULT_DEVICE)
 
     # TODO: bin search
     for n_clusters in range(n_clusters_min, n_clusters_max, skip):
-        print(f"Trying {n_clusters} clusters")
-        gm = GaussianMixture(n_components=n_clusters_min,
+        print(f"Trying {n_clusters} clusters for layer {layer}")
+        gm = GaussianMixture(n_components=n_clusters_min, covariance_type='diag',
                              n_features=N_DIMS).to(device=DEFAULT_DEVICE)
-        gm.fit(dataset.to(DEFAULT_DEVICE))
+        torch_ds = dataset.to(DEFAULT_DEVICE)
+        gm.fit(torch_ds)
+        del torch_ds
+        torch.cuda.empty_cache()
         torch.save(gm.state_dict(), gm_name)
         # pickle.dump(gm, open(gm_name, 'wb'))
         # silhouette_avg = silhouette_score(dataset, gm_name)
@@ -109,7 +114,7 @@ def forward_pass(model_lens: transformer_lens.HookedTransformer, t: str, layer: 
 
 
 # TODO: we should have better labeling!!
-def get_per_layer_emb_dataset(model_lens: transformer_lens.HookedTransformer, dataset: Dataset, layers: List[str], use_save=True) -> List[torch.Tensor]:
+def get_per_layer_emb_dataset(model_lens: transformer_lens.HookedTransformer, dataset: Dataset, layers: List[str], use_save=True) -> List[npt.NDArray]:
     layers_out = []
     for layer in layers:
         ds_name = get_save_tag(f'{layer}_dataset_embd')
@@ -127,15 +132,19 @@ def get_per_layer_emb_dataset(model_lens: transformer_lens.HookedTransformer, da
                 [d for ds in dataset_torch_non_flat for d in ds])
             if use_save:
                 torch.save(dataset_torch, ds_name)
-        layers_out.append(dataset_torch)
-    return torch.stack(layers_out, axis=0)
+        np_ver = dataset_torch.cpu().numpy()
+        del dataset_torch
+        torch.cuda.empty_cache()
+        layers_out.append(np_ver)
+    return layers_out
 
 
-def get_optimal_layer_gmm(dataset_torch: torch.Tensor, layers: List[str], layer: str) -> List[npt.NDArray[np.float64]]:
+def get_optimal_layer_gmm(dataset_np: npt.NDArray, layers: List[str], layer: str) -> List[npt.NDArray[np.float64]]:
     """
     For a specific layer, find the optimal number of clusters: TODO document some references for this is actually done
     Then, return the found centroids for each cluster
     """
+    dataset_torch = torch.tensor(dataset_np).to(DEFAULT_DEVICE)
     print(
         f"Finding optimal number of clusters and such clusters for layer {layer}")
     layer_idx = layers.index(layer)
@@ -145,7 +154,7 @@ def get_optimal_layer_gmm(dataset_torch: torch.Tensor, layers: List[str], layer:
     return gm
 
 
-def cluster_model_lattice(model_lens, ds: torch.Tensor, gmms: List[GaussianMixture], similarity_cutoff=float("-inf")) -> List[List[List[float]]]:
+def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixture], similarity_cutoff=float("-inf")) -> List[List[List[float]]]:
     """
     We will take a bit of a short cut here. Rather than passing *representatives* from each centroid to find the "strength" on the following centroids,
     we will pass the *center* of each centroid to the next layer. This is a simplification, but it should be a good starting point and quite a bit faster.
@@ -181,9 +190,9 @@ def cluster_model_lattice(model_lens, ds: torch.Tensor, gmms: List[GaussianMixtu
         for tok_idx in range(0, ds.shape[0], BS):
             tok = ds[tok_idx:tok_idx + BS]
             high_weight_currs = torch.nonzero(gmms[curr_layer_idx].predict_proba(
-                tok[:, curr_layer_idx]) > HIGH_WEIGHT_PROB, as_tuple=True)
+                torch.tensor(tok[:, curr_layer_idx])) > HIGH_WEIGHT_PROB, as_tuple=True)
             high_weight_nexts = np.nonzero(gmms[next_layer_idx].predict_proba(
-                tok[:, next_layer_idx]) > HIGH_WEIGHT_PROB, as_tuple=True)
+                torch.tensor(tok[:, next_layer_idx])) > HIGH_WEIGHT_PROB, as_tuple=True)
             # print("WITH BATCH", high_weight_currs, high_weight_nexts)
             for i in range(BS):
                 col_idxs_curr = np.nonzero(high_weight_currs[0] == i)[0]
@@ -257,7 +266,7 @@ def cluster_model_lattice(model_lens, ds: torch.Tensor, gmms: List[GaussianMixtu
 #
 
 # TODO: make this batched
-def score_tokens_for_path(embd_dataset: torch.Tensor,
+def score_tokens_for_path(embd_dataset: npt.NDArray,
                           path: List[int], gmms: List[GaussianMixture],
                           score_weighting_per_layer: npt.NDArray, top_n=20):
     """
@@ -278,8 +287,8 @@ def score_tokens_for_path(embd_dataset: torch.Tensor,
             similarity_metric = np.inner(
                 # TODO: we want to use a map from vertex to cluster
                 selector, gmms[layer].predict_proba(
-                    tok[layer].reshape(1, -1)
-                )
+                    torch.tensor(tok[layer].reshape(1, -1))
+                ).detach().cpu().numpy()
             )  # TODO: SUPER SUPER GETHOT
             score += similarity_metric * score_weighting_per_layer[layer]
         scores[i] = score
