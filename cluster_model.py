@@ -29,7 +29,7 @@ N_TOKENS_CUTOFF = 100
 MODEL_NAME = 'EleutherAI/pythia-70m'
 DATASET_NAME = 'NeelNanda/pile-10k'
 
-DEBUG_N_DATASIZE = 200
+DEBUG_N_DATASIZE = 1_000
 DEBUG_N_CLUSTERS_MIN = 50
 DEBUG_N_CLUSTERS_MAX = 51
 
@@ -377,7 +377,9 @@ class Decomposer:
         self.lattice_scores = cluster_model_lattice(
             self.model_lens, self.ds_emb, self.gmms, self.similarity_cutoff)
 
-    def score(self, to_score: List[str], score_path=[8, 57, 89], embeds: Union[npt.NDArray, None] = None) -> List[List[float]]:
+    def score(self, to_score: List[str], score_path=[8, 57, 89], embeds: Union[npt.NDArray, None] = None, weighting_per_layer=None) -> List[List[float]]:
+        if weighting_per_layer is None:
+            weighting_per_layer = np.ones(N_BLOCKS)
         if embeds is None:
             embeds = get_per_layer_emb_dataset(
                 self.model_lens, to_score, self.layers, use_save=False)
@@ -398,7 +400,7 @@ class Decomposer:
             token_to_pos_original_ds) == embeds.shape[1]
         scores = score_tokens_for_path(
             embd_dataset=embeds, path=score_path,
-            gmms=self.gmms, score_weighting_per_layer=np.array([1, 1, 1]), top_n=20)
+            gmms=self.gmms, score_weighting_per_layer=weighting_per_layer, top_n=20)
         item_to_scores = {}
         for i in range(len(scores)):
             item = token_to_original_ds[i]
