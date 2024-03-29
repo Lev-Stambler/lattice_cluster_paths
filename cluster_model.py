@@ -191,15 +191,19 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixtur
             tok = ds[tok_idx:tok_idx + BS]
             high_weight_currs = torch.nonzero(gmms[curr_layer_idx].predict_proba(
                 torch.tensor(tok[:, curr_layer_idx]).to(device=DEFAULT_DEVICE)) > HIGH_WEIGHT_PROB, as_tuple=True)
-            high_weight_nexts = np.nonzero(gmms[next_layer_idx].predict_proba(
+            high_weight_nexts = torch.nonzero(gmms[next_layer_idx].predict_proba(
                 torch.tensor(tok[:, next_layer_idx]).to(device=DEFAULT_DEVICE)) > HIGH_WEIGHT_PROB, as_tuple=True)
             # print("WITH BATCH", high_weight_currs, high_weight_nexts)
             for i in range(BS):
-                col_idxs_curr = np.nonzero(high_weight_currs[0] == i)[0]
-                col_idxs_next = np.nonzero(high_weight_nexts[0] == i)[0]
+                col_idxs_curr = np.nonzero(
+                    high_weight_currs[0].detach().cpu().numpy() == i)[0]
+                col_idxs_next = np.nonzero(
+                    high_weight_nexts[0].detach().cpu().numpy() == i)[0]
 
-                high_weight_curr = high_weight_currs[1][col_idxs_curr]
-                high_weight_next = high_weight_nexts[1][col_idxs_next]
+                high_weight_curr = high_weight_currs[1][col_idxs_curr].detach(
+                ).cpu().numpy()
+                high_weight_next = high_weight_nexts[1][col_idxs_next].detach(
+                ).cpu().numpy()
                 # print("INDEP", high_weight_curr, high_weight_next)
                 for x in high_weight_curr:
                     for y in high_weight_next:
