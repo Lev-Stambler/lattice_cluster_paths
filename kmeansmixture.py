@@ -44,7 +44,7 @@ class KMeansMixture(torch.nn.Module):
             distance='euclidean', device=x.device,
         )
         print("CLUSTER SHAPE", cluster_centers.shape)
-        self.mu = cluster_centers
+        self.mu = torch.nn.Parameter(cluster_centers)
 
     def check_size(self, x):
         if len(x.size()) == 2:
