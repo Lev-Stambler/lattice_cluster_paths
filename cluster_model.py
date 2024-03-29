@@ -28,9 +28,9 @@ N_TOKENS_CUTOFF = 100
 MODEL_NAME = 'EleutherAI/pythia-70m'
 DATASET_NAME = 'NeelNanda/pile-10k'
 
-DEBUG_N_DATASIZE = 70
-DEBUG_N_CLUSTERS_MIN = 20
-DEBUG_N_CLUSTERS_MAX = 21
+DEBUG_N_DATASIZE = 100
+DEBUG_N_CLUSTERS_MIN = 50
+DEBUG_N_CLUSTERS_MAX = 51
 
 # DEBUG_N_CLUSTERS_MIN = 10
 # DEBUG_N_CLUSTERS_MAX = 20
@@ -182,26 +182,32 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[GaussianMixtur
         # HIGH_WEIGHT_PROB = 0.5
 
         to_next_layer_sim = np.zeros(
-            (gmms[curr_layer_idx].n_components, gmms[next_layer_idx].n_components), dtype=int)
+            (gmms[curr_layer_idx].n_components, gmms[next_layer_idx].n_components), dtype=float)
 
         # TODO: BATCHING is a good idea and not working right now
         # I think that I am missing a step here
-        BS = 32
+        BS = 128
         for tok_idx in range(0, ds.shape[0], BS):
-            tok = ds[tok_idx:tok_idx + BS]
+            tok = ds[tok_idx:min(tok_idx + BS, len(ds))]
             pred_curr = torch.nan_to_num(gmms[curr_layer_idx].predict_proba(
                 torch.tensor(tok[:, curr_layer_idx]).to(device=DEFAULT_DEVICE)))
             pred_next = torch.nan_to_num(gmms[next_layer_idx].predict_proba(
                 torch.tensor(tok[:, next_layer_idx]).to(device=DEFAULT_DEVICE)))
 
 
+            batch_size = pred_curr.shape[0]
 			# TODO: does this give us correlation??
             # TODO: prob way to use batching here
-            print(pred_curr.shape, pred_next.shape)
-            for i in range(BS):
-                for c1, pred_on_curr in enumerate(pred_curr[i]):
-                    for c2, pred_on_next in enumerate(pred_next[i]):
-                        to_next_layer_sim[c1, c2] += pred_on_next * pred_on_curr
+            # indexing_matrix = 
+            for i in range(batch_size):
+                if pred_curr[i].sum() != 0 and pred_next[i].sum() != 0:
+                    print("NON TRIVIAL", pred_curr[i], pred_next[i])
+                corrs = torch.outer(pred_curr[i], pred_next[i])
+                # Set the corresponding correlations to the matrix
+                to_next_layer_sim += corrs.detach().cpu().numpy()
+                # for c1, pred_on_curr in enumerate(pred_curr[i]):
+                    # for c2, pred_on_next in enumerate(pred_next[i]):
+                        # to_next_layer_sim[c1, c2] += pred_on_next * pred_on_curr
 
             # return to_next_layer_sim
 
