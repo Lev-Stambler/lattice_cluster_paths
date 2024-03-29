@@ -56,6 +56,8 @@ def create_param_tag():
 def similarity_metric(a: torch.Tensor, b: torch.Tensor):
     return torch.sum(torch.exp(torch.multiply(a, b)))
 
+def score_for_gmm(gmm: KMeansMixture, a: torch.Tensor):
+    return gmm.predict_proba(a.unsqueeze(0)).detach().cpu().numpy()[0]
 
 def similarity_for_gmm(gmm: KMeansMixture, a: torch.Tensor, b: torch.Tensor):
     preds_a = gmm.predict_proba(a.unsqueeze(0))
@@ -292,6 +294,51 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[KMeansMixture]
 #    return G, source, sink
 #
 
+def cutoff_lattice(lattice: List[List[List[float]]], related_cutoff = 1):
+    print(lattice[0].sum())
+    r = [(layer > related_cutoff) * layer for layer in lattice]
+    print(r[0].sum())
+    return r
+
+def restrict_to_related_vertex(lattice: List[List[List[float]]], layer: int, idx: int, rel_cutoff: float) -> List[int]:
+    c_lattice = cutoff_lattice(lattice, related_cutoff=rel_cutoff)
+    below_layers = range(layer)[::-1]
+    above_layers = range(layer + 1, len(c_lattice))
+
+    lattice_below = []
+    curr_idx_set = [idx]
+    for below_layer in below_layers:
+        below_layer = c_lattice[below_layer]
+        new_layer = []
+        for i, node in enumerate(below_layer):
+            has_support = False
+            for c in curr_idx_set: # Check if there is outgoing support
+                if node[c] > 0:
+                    has_support = True
+                    break
+            if has_support:
+                new_layer.append((i, node[idx]))
+        lattice_below = new_layer + lattice_below
+        curr_idx_set = [i for i, _ in new_layer]
+    
+    curr_idx_set = [idx]
+    lattice_above = []
+    for above_layer in above_layers:
+        above_layer = c_lattice[above_layer]
+        new_layer = []
+        for i, node in enumerate(above_layer):
+            has_support = False
+            for c in curr_idx_set: # Check if the next layer has incoming support from c
+                if node[c] > 0:
+                    has_support = True
+                    break
+            if has_support:
+                new_layer.append((i, node[idx]))
+        lattice_above += new_layer
+        curr_idx_set = [i for i, _ in new_layer]
+
+    return lattice_below + [(idx, 1)] + lattice_above
+    
 # TODO: make this batched
 def score_tokens_for_path(embd_dataset: npt.NDArray,
                           path: List[int], gmms: List[KMeansMixture],
@@ -311,12 +358,12 @@ def score_tokens_for_path(embd_dataset: npt.NDArray,
             # TODO: change
             selector = np.zeros(gmms[layer].n_components)
             selector[path[layer]] = 1
-            similarity_metric = np.inner(
-                # TODO: we want to use a map from vertex to cluster
-                selector, gmms[layer].predict_proba(
-                    torch.tensor(tok[layer].reshape(1, -1))
-                ).detach().cpu().numpy()
-            )  # TODO: SUPER SUPER GETHOT
+            probs = score_for_gmm(gmms[layer], torch.tensor(
+                tok[layer]
+            ).to(device=DEFAULT_DEVICE))
+            similarity_metric =  probs[path[layer]]
+            print("PROBS MAX", max(probs), "PROBS PATH", similarity_metric)
+
             score += similarity_metric * score_weighting_per_layer[layer]
         scores[i] = score
 
