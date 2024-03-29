@@ -41,7 +41,7 @@ class KMeansMixture(torch.nn.Module):
         print("USING DEVICE", x.device)
         cluster_ids_x, cluster_centers = kmeans(
             X=x, num_clusters=self.n_components,
-            distance='euclidean', device=x.device
+            distance='euclidean', device=x.device,
         )
         print("CLUSTER SHAPE", cluster_centers.shape)
         self.mu = cluster_centers
@@ -63,7 +63,7 @@ class KMeansMixture(torch.nn.Module):
         """
         x = self.check_size(x)
 
-        diff = x - self.mu.unsqueeze(0)
+        diff = x - self.mu.unsqueeze(0).to(x.device)
 
         # Calculate squared distances (Euclidean)
         squared_distances = (diff ** 2).sum(-1)
