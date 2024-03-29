@@ -22,6 +22,8 @@ class KMeansMixture(torch.nn.Module):
 
         self.n_components = n_components
         self.n_features = n_features
+        self.mu = torch.nn.Parameter(torch.randn(
+            self.n_components, self.n_features), requires_grad=False)
 
         self._init_params()
 
@@ -68,6 +70,7 @@ class KMeansMixture(torch.nn.Module):
         # Calculate squared distances (Euclidean)
         squared_distances = (diff ** 2).sum(-1)
         distances = squared_distances.sqrt()
-        inverse_distances = 1.0 / distances
-        probabilities = inverse_distances / np.sum(inverse_distances, axis=1, keepdims=True)
+        inverse_distances = (1.0 / distances)#.detach().cpu().numpy()
+        probabilities = inverse_distances / \
+            torch.sum(inverse_distances, dim=1, keepdims=True)
         return probabilities

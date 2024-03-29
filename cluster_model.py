@@ -30,8 +30,8 @@ MODEL_NAME = 'EleutherAI/pythia-70m'
 DATASET_NAME = 'NeelNanda/pile-10k'
 
 DEBUG_N_DATASIZE = 100
-DEBUG_N_CLUSTERS_MIN = 50
-DEBUG_N_CLUSTERS_MAX = 51
+DEBUG_N_CLUSTERS_MIN = 30
+DEBUG_N_CLUSTERS_MAX = 31
 
 # DEBUG_N_CLUSTERS_MIN = 10
 # DEBUG_N_CLUSTERS_MAX = 20
@@ -199,8 +199,8 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[KMeansMixture]
             # TODO: prob way to use batching here
             # indexing_matrix =
             for i in range(batch_size):
-                if pred_curr[i].sum() != 0 and pred_next[i].sum() != 0:
-                    print("NON TRIVIAL", pred_curr[i], pred_next[i])
+                # if pred_curr[i].sum() != 0 and pred_next[i].sum() != 0:
+                #     print("NON TRIVIAL", pred_curr[i], pred_next[i])
                 corrs = torch.outer(pred_curr[i], pred_next[i])
                 # Set the corresponding correlations to the matrix
                 to_next_layer_sim += corrs.detach().cpu().numpy()
