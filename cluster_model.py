@@ -94,7 +94,7 @@ def GMM_method(dataset: torch.Tensor, layer: int, n_clusters_min=N_CLUSTERS_MIN,
     for n_clusters in range(n_clusters_min, n_clusters_max, skip):
         print(f"Trying {n_clusters} clusters")
         gm = GaussianMixture(n_components=n_clusters_min, n_features=N_DIMS)
-        gm.fit(dataset)
+        gm.fit(dataset.to(DEFAULT_DEVICE))
         torch.save(gm.state_dict(), gm_name)
         # pickle.dump(gm, open(gm_name, 'wb'))
         # silhouette_avg = silhouette_score(dataset, gm_name)
