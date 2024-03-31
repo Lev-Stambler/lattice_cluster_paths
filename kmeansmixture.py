@@ -55,6 +55,21 @@ class KMeansMixture(torch.nn.Module):
 
         return x
 
+		
+    def distances_squared(self, x):
+        """
+        Returns squared distances to each cluster.
+        args:
+            x:          torch.Tensor (n, d) or (n, 1, d)
+        returns:
+            y:          torch.Tensor (n, k)
+        """
+        x = self.check_size(x)
+
+        diff = x - self.mu.unsqueeze(0).to(x.device)
+        squared_distances = (diff ** 2).sum(-1)
+        return squared_distances
+
     def predict_proba(self, x):
         """
         Returns normalized probabilities of class membership.

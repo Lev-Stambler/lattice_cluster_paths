@@ -54,28 +54,33 @@ def similarity_metric(a: torch.Tensor, b: torch.Tensor):
 
 
 def score_for_gmm(gmm: KMeansMixture, a: torch.Tensor):
+    """
+    Return a score for how "close" a point is to the each cluster
+
+    We use a simple notion of similarity: the negative squared distances
+    """
     one_size = False
     if len(a.shape) == 1:
         one_size = True
         a = a.unsqueeze(0)
     if one_size:
-        return gmm.predict_proba(a).detach().cpu().numpy()[0]
-    return gmm.predict_proba(a).detach().cpu().numpy()
+        # return gmm.predict_proba(a).detach().cpu().numpy()[0]
+        return gmm.distances_squared(a).detach().cpu().numpy()[0] * -1
+    return gmm.distances_squared(a).detach().cpu().numpy() * -1
+    # return gmm.predict_proba(a).detach().cpu().numpy()
 
 
 def score_for_neuron(self, to_score: List[str], primary_layer: int,
                      score_path: List[int],
                      top_n=100, primary_cutoff_mult_factor=3,
-                     BS=1,
+                     BS=128,
                      embeds: Union[torch.Tensor, None] = None,
                      weighting_per_layer=None) -> List[int]:
     top_for_primary = top_n * primary_cutoff_mult_factor
     embeds, tokens_to_ds, _ = self._get_ds_metadata(
         to_score, embeds)
-    print("EMBEDS LEN", len(embeds))
     max_n_tokens = embeds.shape[1]
 
-    assert BS == 1, "Batching not supported yet"
     scores: List[(int, float)] = []
 
     for i in range(0, max_n_tokens, BS):
@@ -95,7 +100,13 @@ def score_for_neuron(self, to_score: List[str], primary_layer: int,
 
     # Now, we want to get sort the top N by the path
     # TODO: weighting?
-    top_score_idx = list(set([tokens_to_ds[x[0]] for x in top_by_score]))
+
+    top_score_idx = list([tokens_to_ds[x[0]] for x in top_by_score])
+    included = set()
+    # Dedup
+    top_score_idx = [x for x in top_score_idx if not (
+        x in included or included.add(x))]
+
     top_tokens = [x[0] for x in top_by_score]
     print("TOP TOKENS", len(top_tokens), top_tokens)
     embeds_for_top = embeds[:, top_tokens]
@@ -443,7 +454,7 @@ def restrict_to_related_vertex(lattice: List[List[List[float]]], layer: int, idx
 # TODO: make this batched
 def score_tokens_for_path(embd_dataset: npt.NDArray,
                           path: List[int], gmms: List[KMeansMixture],
-                          score_weighting_per_layer: npt.NDArray, top_n=20):
+                          score_weighting_per_layer: npt.NDArray, BS=128):
     """
     embd_dataset: The outer index corresponds to the layer, the inner index corresponds to the token
     """
@@ -453,19 +464,27 @@ def score_tokens_for_path(embd_dataset: npt.NDArray,
     print(token_per_layer.shape, path)
     assert token_per_layer.shape[1] == len(path)
 
-    for i, tok in enumerate(token_per_layer):
-        score = 0
+    for i in range(0, token_per_layer.shape[0], BS):
+        top_idx = min(i + BS, token_per_layer.shape[0])
         for layer in range(len(path)):
-            # TODO: change
-            selector = np.zeros(gmms[layer].n_components)
-            selector[path[layer]] = 1
             probs = score_for_gmm(gmms[layer], torch.tensor(
-                tok[layer]
-            ).to(device=DEFAULT_DEVICE))
-            similarity_metric = probs[path[layer]]
+                token_per_layer[i:top_idx, layer]).to(device=DEFAULT_DEVICE))
+            similarity_metric = probs[:, path[layer]]
+            scores[i:top_idx] += similarity_metric * score_weighting_per_layer[layer]
 
-            score += similarity_metric * score_weighting_per_layer[layer]
-        scores[i] = score
+    # for i, tok in enumerate(token_per_layer):
+    #     score = 0
+    #     for layer in range(len(path)):
+    #         # TODO: change
+    #         selector = np.zeros(gmms[layer].n_components)
+    #         selector[path[layer]] = 1
+    #         probs = score_for_gmm(gmms[layer], torch.tensor(
+    #             tok[layer]
+    #         ).to(device=DEFAULT_DEVICE))
+    #         similarity_metric = probs[path[layer]]
+
+    #         score += similarity_metric * score_weighting_per_layer[layer]
+    #     scores[i] = score
 
     return scores
 
@@ -559,19 +578,19 @@ class Decomposer:
                                 BS=BS,
                                 embeds=embeds, weighting_per_layer=weighting_per_layer)
 
-    def score(self, to_score: List[str], score_path: List[int], embeds: Union[npt.NDArray, None] = None, weighting_per_layer=None) -> List[List[float]]:
+    def score(self, to_score: List[str], score_path: List[int], embeds: Union[npt.NDArray, None] = None, weighting_per_layer=None, BS=128) -> List[List[float]]:
         """
         Get the scores for the tokens in the dataset
         """
         if weighting_per_layer is None:
             weighting_per_layer = np.ones(N_BLOCKS)
 
-        embeds, token_to_original_ds, token_to_pos_original_ds = self._get_ds_metadata(
+        embeds, token_to_original_ds, _ = self._get_ds_metadata(
             to_score, embeds)
         print("GOT EMBEDS", embeds.shape)
         scores = score_tokens_for_path(
             embd_dataset=embeds, path=score_path,
-            gmms=self.gmms, score_weighting_per_layer=weighting_per_layer, top_n=20)
+            gmms=self.gmms, score_weighting_per_layer=weighting_per_layer, BS=BS)
         item_to_scores = {}
         for i in range(len(scores)):
             item = token_to_original_ds[i]
