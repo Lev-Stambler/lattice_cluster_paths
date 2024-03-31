@@ -7,7 +7,7 @@ import numpy.typing as npt
 import torch
 import transformer_lens
 # from gmm import GaussianMixture
-from kmeansmixture import KMeansMixture
+from kmeansmixture_np import KMeansMixture
 import hashlib
 import networkx as nx
 import json
@@ -24,7 +24,7 @@ DATASET_NAME = 'NeelNanda/pile-10k'
 N_DIMS = 512
 SEED = 69_420
 
-DEBUG = False
+DEBUG = True
 
 if DEBUG:
     N_DATASIZE = 200
@@ -39,7 +39,7 @@ else:
     N_CLUSTERS_MIN = N_DIMS
     N_CLUSTERS_MAX = N_DIMS + 1
     N_BLOCKS = 6
-    STRING_SIZE_CUTOFF = 200
+    STRING_SIZE_CUTOFF = 700
 
 
 def create_param_tag():
@@ -158,7 +158,7 @@ def forward_on_block(model, block_idx: int, data: npt.NDArray):
 
 
 # TODO: optimize numb of clusters
-def GMM_method(dataset: torch.Tensor, layer: int, n_clusters_min=N_CLUSTERS_MIN, n_clusters_max=N_CLUSTERS_MAX, skip=30) -> KMeansMixture:
+def GMM_method(dataset: npt.NDArray, layer: int, n_clusters_min=N_CLUSTERS_MIN, n_clusters_max=N_CLUSTERS_MAX, skip=30) -> KMeansMixture:
     gm_name = get_and_prepare_save_tag(f'{layer}_clusters_GMM')
     torch.manual_seed(SEED)
 
@@ -174,9 +174,7 @@ def GMM_method(dataset: torch.Tensor, layer: int, n_clusters_min=N_CLUSTERS_MIN,
         print(f"Trying {n_clusters} clusters for layer {layer}")
         gm = KMeansMixture(n_components=n_clusters_min,
                            n_features=N_DIMS).to(device=DEFAULT_DEVICE)
-        torch_ds = dataset.to(DEFAULT_DEVICE)
-        gm.fit(torch_ds)
-        del torch_ds
+        gm.fit(dataset, seed=SEED)
         torch.cuda.empty_cache()
         torch.save(gm.state_dict(), gm_name)
         # pickle.dump(gm, open(gm_name, 'wb'))
@@ -198,22 +196,40 @@ def get_per_layer_emb_dataset(model_lens: transformer_lens.HookedTransformer, da
 
         # TODO: DOES THIS WORK?
         if os.path.exists(ds_name) and use_save:
-            print(f"Loading dataset from cache to device {DEFAULT_DEVICE}")
-            dataset_torch = torch.load(ds_name, map_location='cpu')
+            print("Loading dataset from cache")
+            dataset_np = pickle.load(open(ds_name, 'rb'))
         else:
             # TODO: think about this in terms of flattening the dataset
-            # TODO: we can use batching
-            dataset_torch_non_flat = [forward_pass(model_lens, t, layer).squeeze(
-                0).detach() for t in dataset]
-            dataset_torch = torch.stack(
-                [d for ds in dataset_torch_non_flat for d in ds])
-            if use_save:
-                torch.save(dataset_torch, ds_name)
-        np_ver = dataset_torch.cpu().numpy()
-        del dataset_torch
-        torch.cuda.empty_cache()
-        layers_out.append(np_ver)
+            dataset_np_non_flat = [list(forward_pass(model_lens, t, layer).squeeze(
+                0).detach().cpu().numpy()) for t in dataset]
+            dataset_np = [d for ds in dataset_np_non_flat for d in ds]
+            pickle.dump(dataset_np, open(ds_name, 'wb'))
+        layers_out.append(dataset_np)
     return np.stack(layers_out, axis=0)
+
+
+    # layers_out = []
+    # for layer in layers:
+    #     ds_name = get_and_prepare_save_tag(f'{layer}_dataset_embd')
+
+    #     # TODO: DOES THIS WORK?
+    #     if os.path.exists(ds_name) and use_save:
+    #         print(f"Loading dataset from cache to device {DEFAULT_DEVICE}")
+    #         dataset_torch = torch.load(ds_name, map_location='cpu')
+    #     else:
+    #         # TODO: think about this in terms of flattening the dataset
+    #         # TODO: we can use batching
+    #         dataset_torch_non_flat = [forward_pass(model_lens, t, layer).squeeze(
+    #             0).detach() for t in dataset]
+    #         dataset_torch = torch.stack(
+    #             [d for ds in dataset_torch_non_flat for d in ds])
+    #         if use_save:
+    #             torch.save(dataset_torch, ds_name)
+    #     np_ver = dataset_torch.cpu().numpy()
+    #     del dataset_torch
+    #     torch.cuda.empty_cache()
+    #     layers_out.append(np_ver)
+    # return np.stack(layers_out, axis=0)
 
 
 def get_optimal_layer_gmm(dataset_np: npt.NDArray, layers: List[str], layer: str) -> List[npt.NDArray[np.float64]]:
@@ -221,13 +237,12 @@ def get_optimal_layer_gmm(dataset_np: npt.NDArray, layers: List[str], layer: str
     For a specific layer, find the optimal number of clusters: TODO document some references for this is actually done
     Then, return the found centroids for each cluster
     """
-    dataset_torch = torch.tensor(dataset_np).to(device=DEFAULT_DEVICE)
     print(
         f"Finding optimal number of clusters and such clusters for layer {layer}")
     layer_idx = layers.index(layer)
     # ds_name = f'metadata/{layer}_dataset_embd__SEED_{SEED}__SIZE_{N_DATASIZE}.pkl'
 
-    gm = GMM_method(dataset_torch[layer_idx], layer)
+    gm = GMM_method(dataset_np[layer_idx], layer)
     return gm
 
 
