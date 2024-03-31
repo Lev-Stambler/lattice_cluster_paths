@@ -55,6 +55,18 @@ class KMeansMixture(torch.nn.Module):
 
         return x
 
+    def dot_product(self, x):
+        """
+        Returns dot product of each sample with each cluster.
+        args:
+            x:          torch.Tensor (n, d) or (n, 1, d)
+        returns:
+            y:          torch.Tensor (n, k)
+        """
+        x = self.check_size(x)
+
+        mu = self.mu.unsqueeze(0).to(x.device)
+        return torch.sum(x * mu, dim=-1)
 		
     def distances_squared(self, x):
         """

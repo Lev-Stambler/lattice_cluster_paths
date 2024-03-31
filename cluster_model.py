@@ -1,7 +1,7 @@
 import os
 import pickle
 from datasets import Dataset, load_dataset
-from typing import List, Union
+from typing import List, Union, Dict
 import numpy as np
 import numpy.typing as npt
 import torch
@@ -65,8 +65,8 @@ def score_for_gmm(gmm: KMeansMixture, a: torch.Tensor):
         a = a.unsqueeze(0)
     if one_size:
         # return gmm.predict_proba(a).detach().cpu().numpy()[0]
-        return gmm.distances_squared(a).detach().cpu().numpy()[0] * -1
-    return gmm.distances_squared(a).detach().cpu().numpy() * -1
+        return gmm.dot_product(a).detach().cpu().numpy()[0] * -1
+    return gmm.dot_product(a).detach().cpu().numpy()
     # return gmm.predict_proba(a).detach().cpu().numpy()
 
 
@@ -377,19 +377,20 @@ def cutoff_lattice(lattice: List[List[List[float]]], related_cutoff=1):
 
 
 def restrict_to_related_path(lattice: List[List[List[float]]],
-                             layer: int, idx: int, n_paths=10) -> List[int]:
+                             layer: int, idx: int, avoid_set: Union[None, Dict[int, List[int]]] = None, n_paths=10) -> List[int]:
     below_layers = range(layer)[::-1]
     above_layers = range(layer + 1, len(lattice) + 1)
 
     paths = [([idx], 0)]
 
-    for below_layer in below_layers:
-        below_layer = lattice[below_layer]
+    for below_layer_idx in below_layers:
+        below_layer = lattice[below_layer_idx]
         new_paths = []
         for i, node in enumerate(below_layer):
-            for _, (path, score) in enumerate(paths):  # Check if there is outgoing support
-                bottom_node = path[0]
-                new_paths.append(([i] + path, score + node[bottom_node]))
+            if avoid_set is None or below_layer_idx not in avoid_set or i not in avoid_set[below_layer_idx]:
+                for _, (path, score) in enumerate(paths):  # Check if there is outgoing support
+                    bottom_node = path[0]
+                    new_paths.append(([i] + path, score + node[bottom_node]))
         paths = new_paths
         # Sort by score
         cutoff = min(len(paths), n_paths)
@@ -402,8 +403,9 @@ def restrict_to_related_path(lattice: List[List[List[float]]],
         for _, (path, score) in enumerate(paths):
             c = path[-1]
             for i, val in enumerate(curr_layer[c]):
-                # paths[x] = (path + [i], score + val)
-                new_paths.append((path + [i], score + val))
+                if avoid_set is None or above_layer not in avoid_set or i not in avoid_set[above_layer]:
+                    # paths[x] = (path + [i], score + val)
+                    new_paths.append((path + [i], score + val))
         paths = new_paths
         cutoff = min(len(paths), n_paths)
         paths = sorted(paths, key=lambda x: x[1], reverse=True)
@@ -470,7 +472,8 @@ def score_tokens_for_path(embd_dataset: npt.NDArray,
             probs = score_for_gmm(gmms[layer], torch.tensor(
                 token_per_layer[i:top_idx, layer]).to(device=DEFAULT_DEVICE))
             similarity_metric = probs[:, path[layer]]
-            scores[i:top_idx] += similarity_metric * score_weighting_per_layer[layer]
+            scores[i:top_idx] += similarity_metric * \
+                score_weighting_per_layer[layer]
 
     # for i, tok in enumerate(token_per_layer):
     #     score = 0
