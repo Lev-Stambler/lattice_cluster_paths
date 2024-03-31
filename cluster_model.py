@@ -18,44 +18,34 @@ DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 # DEFAULT_DEVICE = 'cpu'
 
 # TODO: separate PARAMS file?
-
-# TODO: not global var
-N_DIMS = 512
-SEED = 69_420
-N_DATASIZE = 8_000
-# N_CLUSTERS_MIN = int(0.5 * N_DIMS)
-# N_CLUSTERS_MAX = 10 * N_DIMS
-N_CLUSTERS = int(N_DIMS)
-# TODO: CHANGE BACK TO 6/ MAKE THIS A PARAM
-N_BLOCKS = 2
-N_TOKENS_CUTOFF = 200
-
 MODEL_NAME = 'EleutherAI/pythia-70m'
 DATASET_NAME = 'NeelNanda/pile-10k'
 
-DEBUG_N_DATASIZE = 1_000
-DEBUG_N_CLUSTERS_MIN = 100
-DEBUG_N_CLUSTERS_MAX = 101
+N_DIMS = 512
+SEED = 69_420
 
-# DEBUG_N_CLUSTERS_MIN = 10
-# DEBUG_N_CLUSTERS_MAX = 20
-
-DEBUG_N_BLOCKS = 6
 DEBUG = True
 
 if DEBUG:
-    N_DATASIZE = DEBUG_N_DATASIZE
-    N_CLUSTERS_MIN = DEBUG_N_CLUSTERS_MIN
-    N_CLUSTERS_MAX = DEBUG_N_CLUSTERS_MAX
-    N_BLOCKS = DEBUG_N_BLOCKS
-
+    N_DATASIZE = 200
+    N_CLUSTERS_MIN = 50
+    N_CLUSTERS_MAX = 51
+    N_BLOCKS = 6
+    STRING_SIZE_CUTOFF = 200
+else:
+    N_DATASIZE = 800
+    # N_CLUSTERS_MIN = int(0.5 * N_DIMS)
+    # N_CLUSTERS_MAX = 10 * N_DIMS
+    N_CLUSTERS_MIN = 100
+    N_CLUSTERS_MAX = 101
+    N_BLOCKS = 6
+    STRING_SIZE_CUTOFF = 200
 
 def create_param_tag():
     m = hashlib.sha256()
     m.update(
-        f'{MODEL_NAME}{DATASET_NAME}{SEED}{N_DATASIZE}{N_CLUSTERS_MIN}{N_CLUSTERS_MAX}{N_BLOCKS}'.encode())
+        f'{MODEL_NAME}{DATASET_NAME}{SEED}{N_DATASIZE}{N_CLUSTERS_MIN}{N_CLUSTERS_MAX}{N_BLOCKS}{STRING_SIZE_CUTOFF}'.encode())
     return m.hexdigest()[:40]
-
 
 def similarity_metric(a: torch.Tensor, b: torch.Tensor):
     return torch.sum(torch.exp(torch.multiply(a, b)))
@@ -78,7 +68,8 @@ def metadata_json():
         'N_DATASIZE': N_DATASIZE,
         'N_CLUSTERS_MIN': N_CLUSTERS_MIN,
         'N_CLUSTERS_MAX': N_CLUSTERS_MAX,
-        'N_BLOCKS': N_BLOCKS
+        'N_BLOCKS': N_BLOCKS,
+        'N_STRING_SIZE_CUTOFF': STRING_SIZE_CUTOFF
     }
 
 
@@ -323,6 +314,43 @@ def cutoff_lattice(lattice: List[List[List[float]]], related_cutoff=1):
     return r
 
 
+def restrict_to_related_path(lattice: List[List[List[float]]],
+                             layer: int, idx: int, n_paths=10) -> List[int]:
+    below_layers = range(layer)[::-1]
+    above_layers = range(layer + 1, len(lattice) + 1)
+
+    paths = [([idx], 0)]
+    
+    for below_layer in below_layers:
+        below_layer = lattice[below_layer]
+        new_paths = []
+        for i, node in enumerate(below_layer):
+            for _, (path, score) in enumerate(paths):  # Check if there is outgoing support
+                bottom_node = path[0]
+                new_paths.append(([i] + path, score + node[bottom_node]))
+        paths = new_paths
+        # Sort by score
+        cutoff = min(len(paths), n_paths)
+        paths = sorted(paths, key=lambda x: x[1], reverse=True)
+        paths = paths[:cutoff]
+
+    for above_layer in above_layers:
+        curr_layer = lattice[above_layer - 1]
+        new_paths = []
+        for _, (path, score) in enumerate(paths):
+            c = path[-1]
+            for i, val in enumerate(curr_layer[c]):
+                # paths[x] = (path + [i], score + val)
+                new_paths.append((path + [i], score + val))
+        paths = new_paths
+        cutoff = min(len(paths), n_paths)
+        paths = sorted(paths, key=lambda x: x[1], reverse=True)
+        paths = paths[:cutoff]
+
+    return paths
+
+
+
 def restrict_to_related_vertex(lattice: List[List[List[float]]], layer: int, idx: int, rel_cutoff: float) -> List[int]:
     c_lattice = lattice  # cutoff_lattice(lattice, related_cutoff=rel_cutoff)
     below_layers = range(layer)[::-1]
@@ -432,13 +460,8 @@ class Decomposer:
         self.model_lens = model_lens
         # TODO: cutoff in random position
 
-        def get_random_cutoff(t: str):
-            if len(t) < N_TOKENS_CUTOFF:
-                return t
-            start_r = np.random.randint(0, len(t) - N_TOKENS_CUTOFF)
-            end = start_r + N_TOKENS_CUTOFF
-            return t[start_r:end]
-        self.dataset = [get_random_cutoff(d) for d in dataset]
+        self.dataset = [utils.get_random_cutoff(
+            d, STRING_SIZE_CUTOFF) for d in dataset]
         self.layers = layers
         self.similarity_cutoff = similarity_cutoff
         self.gmms = []
@@ -454,13 +477,10 @@ class Decomposer:
         self.lattice_scores = cluster_model_lattice(
             self.model_lens, self.ds_emb, self.gmms, self.similarity_cutoff)
 
-    def score(self, to_score: List[str], score_path=[8, 57, 89], embeds: Union[npt.NDArray, None] = None, weighting_per_layer=None) -> List[List[float]]:
-        if weighting_per_layer is None:
-            weighting_per_layer = np.ones(N_BLOCKS)
+    def _get_ds_metadata(self, ds: List[str], embeds: npt.NDArray = None):
         if embeds is None:
             embeds = get_per_layer_emb_dataset(
-                self.model_lens, to_score, self.layers, use_save=False)
-        ds = to_score
+                self.model_lens, ds, self.layers, use_save=False)
         token_to_original_ds = []
         token_to_pos_original_ds = []
 
@@ -472,9 +492,32 @@ class Decomposer:
                 token_to_original_ds.append(i)
                 token_to_pos_original_ds.append(j)
 
-        print("DS", embeds.shape, len(token_to_original_ds))
         assert len(token_to_original_ds) == len(
             token_to_pos_original_ds) == embeds.shape[1]
+        return embeds, token_to_original_ds, token_to_pos_original_ds
+
+
+    def score_for_neuron(self, to_score: List[str], primary_layer: int,
+                         score_path: List[int],
+                         top_n=100, primary_cutoff_factor=3,
+                         embeds: Union[npt.NDArray, None] = None) -> List[int]:
+        """
+        """
+        top_for_primary = top_n * primary_cutoff_factor
+        embeds, token_to_original_ds, token_to_pos_original_ds = self._get_ds_metadata(to_score, embeds)
+        # ds = to_score(
+        token_to_original_ds = []
+        token_to_pos_original_ds = []
+        
+
+    def score(self, to_score: List[str], score_path: List[int], embeds: Union[npt.NDArray, None] = None, weighting_per_layer=None) -> List[List[float]]:
+        """
+        Get the scores for the tokens in the dataset
+        """
+        if weighting_per_layer is None:
+            weighting_per_layer = np.ones(N_BLOCKS)
+
+        embeds, token_to_original_ds, token_to_pos_original_ds = self._get_ds_metadata(to_score, embeds)
         scores = score_tokens_for_path(
             embd_dataset=embeds, path=score_path,
             gmms=self.gmms, score_weighting_per_layer=weighting_per_layer, top_n=20)
