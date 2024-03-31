@@ -41,18 +41,69 @@ else:
     N_BLOCKS = 6
     STRING_SIZE_CUTOFF = 200
 
+
 def create_param_tag():
     m = hashlib.sha256()
     m.update(
         f'{MODEL_NAME}{DATASET_NAME}{SEED}{N_DATASIZE}{N_CLUSTERS_MIN}{N_CLUSTERS_MAX}{N_BLOCKS}{STRING_SIZE_CUTOFF}'.encode())
     return m.hexdigest()[:40]
 
+
 def similarity_metric(a: torch.Tensor, b: torch.Tensor):
     return torch.sum(torch.exp(torch.multiply(a, b)))
 
 
 def score_for_gmm(gmm: KMeansMixture, a: torch.Tensor):
-    return gmm.predict_proba(a.unsqueeze(0)).detach().cpu().numpy()[0]
+    one_size = False
+    if len(a.shape) == 1:
+        one_size = True
+        a = a.unsqueeze(0)
+    if one_size:
+        return gmm.predict_proba(a).detach().cpu().numpy()[0]
+    return gmm.predict_proba(a).detach().cpu().numpy()
+
+
+def score_for_neuron(self, to_score: List[str], primary_layer: int,
+                     score_path: List[int],
+                     top_n=100, primary_cutoff_mult_factor=3,
+                     BS=1,
+                     embeds: Union[torch.Tensor, None] = None,
+                     weighting_per_layer=None) -> List[int]:
+    top_for_primary = top_n * primary_cutoff_mult_factor
+    embeds, tokens_to_ds, _ = self._get_ds_metadata(
+        to_score, embeds)
+    print("EMBEDS LEN", len(embeds))
+    max_n_tokens = embeds.shape[1]
+
+    assert BS == 1, "Batching not supported yet"
+    scores: List[(int, float)] = []
+
+    for i in range(0, max_n_tokens, BS):
+        top_idx = min(i + BS, max_n_tokens)
+        e = torch.tensor(embeds[:, i:top_idx])
+        gmm_scores = score_for_gmm(
+            self.gmms[primary_layer], e[primary_layer])
+        to_add = zip(
+            range(i, top_idx),
+            list(gmm_scores[:, score_path[primary_layer]])
+        )
+        to_add = list(to_add)
+        scores = scores + to_add
+
+    top_by_score = sorted(scores, key=lambda x: x[1], reverse=True)[
+        :top_for_primary]
+
+    # Now, we want to get sort the top N by the path
+    # TODO: weighting?
+    top_score_idx = list(set([tokens_to_ds[x[0]] for x in top_by_score]))
+    top_tokens = [x[0] for x in top_by_score]
+    print("TOP TOKENS", len(top_tokens), top_tokens)
+    embeds_for_top = embeds[:, top_tokens]
+    ds_scored = [to_score[i] for i in top_score_idx]
+    print("TOP SCORE IDX", top_score_idx)
+    print("DS SCORED", len(ds_scored))
+    print("EMB FOR TOP", embeds_for_top.shape)
+    return top_tokens, top_score_idx, self.score(ds_scored, score_path, weighting_per_layer=weighting_per_layer)
 
 
 def similarity_for_gmm(gmm: KMeansMixture, a: torch.Tensor, b: torch.Tensor):
@@ -320,7 +371,7 @@ def restrict_to_related_path(lattice: List[List[List[float]]],
     above_layers = range(layer + 1, len(lattice) + 1)
 
     paths = [([idx], 0)]
-    
+
     for below_layer in below_layers:
         below_layer = lattice[below_layer]
         new_paths = []
@@ -348,7 +399,6 @@ def restrict_to_related_path(lattice: List[List[List[float]]],
         paths = paths[:cutoff]
 
     return paths
-
 
 
 def restrict_to_related_vertex(lattice: List[List[List[float]]], layer: int, idx: int, rel_cutoff: float) -> List[int]:
@@ -496,19 +546,18 @@ class Decomposer:
             token_to_pos_original_ds) == embeds.shape[1]
         return embeds, token_to_original_ds, token_to_pos_original_ds
 
-
     def score_for_neuron(self, to_score: List[str], primary_layer: int,
                          score_path: List[int],
                          top_n=100, primary_cutoff_factor=3,
-                         embeds: Union[npt.NDArray, None] = None) -> List[int]:
+                         BS=1,
+                         embeds: Union[torch.Tensor, None] = None,
+                         weighting_per_layer=None) -> List[int]:
         """
         """
-        top_for_primary = top_n * primary_cutoff_factor
-        embeds, token_to_original_ds, token_to_pos_original_ds = self._get_ds_metadata(to_score, embeds)
-        # ds = to_score(
-        token_to_original_ds = []
-        token_to_pos_original_ds = []
-        
+        return score_for_neuron(self, to_score, primary_layer, score_path,
+                                top_n=top_n, primary_cutoff_mult_factor=primary_cutoff_factor,
+                                BS=BS,
+                                embeds=embeds, weighting_per_layer=weighting_per_layer)
 
     def score(self, to_score: List[str], score_path: List[int], embeds: Union[npt.NDArray, None] = None, weighting_per_layer=None) -> List[List[float]]:
         """
@@ -517,7 +566,9 @@ class Decomposer:
         if weighting_per_layer is None:
             weighting_per_layer = np.ones(N_BLOCKS)
 
-        embeds, token_to_original_ds, token_to_pos_original_ds = self._get_ds_metadata(to_score, embeds)
+        embeds, token_to_original_ds, token_to_pos_original_ds = self._get_ds_metadata(
+            to_score, embeds)
+        print("GOT EMBEDS", embeds.shape)
         scores = score_tokens_for_path(
             embd_dataset=embeds, path=score_path,
             gmms=self.gmms, score_weighting_per_layer=weighting_per_layer, top_n=20)
