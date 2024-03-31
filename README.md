@@ -1,9 +1,9 @@
 ## Installation weirdness
 Using kmeans-pytorch
 ```bash
-pip install https://github.com/subhadarship/kmeans_pytorch.git
+pip install git+https://github.com/subhadarship/kmeans_pytorch.git
 ```
-^^ Does not work. Need
+
 ```
 # https://github.com/subhadarship/kmeans_pytorch/issues/16
             if selected.shape[0] == 0:

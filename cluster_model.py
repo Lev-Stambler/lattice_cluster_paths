@@ -10,11 +10,15 @@ import transformer_lens
 from kmeansmixture import KMeansMixture
 import hashlib
 import networkx as nx
+import json
 import utils
 
 
 DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 # DEFAULT_DEVICE = 'cpu'
+
+# TODO: separate PARAMS file?
+
 # TODO: not global var
 N_DIMS = 512
 SEED = 69_420
@@ -56,8 +60,10 @@ def create_param_tag():
 def similarity_metric(a: torch.Tensor, b: torch.Tensor):
     return torch.sum(torch.exp(torch.multiply(a, b)))
 
+
 def score_for_gmm(gmm: KMeansMixture, a: torch.Tensor):
     return gmm.predict_proba(a.unsqueeze(0)).detach().cpu().numpy()[0]
+
 
 def similarity_for_gmm(gmm: KMeansMixture, a: torch.Tensor, b: torch.Tensor):
     preds_a = gmm.predict_proba(a.unsqueeze(0))
@@ -66,8 +72,24 @@ def similarity_for_gmm(gmm: KMeansMixture, a: torch.Tensor, b: torch.Tensor):
     # return np.inner(a, b)
 
 
-def get_save_tag(prepend: str):
-    return f'metadata/{prepend}_{create_param_tag()}.pkl'
+def metadata_json():
+    return {
+        'SEED': SEED,
+        'N_DATASIZE': N_DATASIZE,
+        'N_CLUSTERS_MIN': N_CLUSTERS_MIN,
+        'N_CLUSTERS_MAX': N_CLUSTERS_MAX,
+        'N_BLOCKS': N_BLOCKS
+    }
+
+
+def get_and_prepare_save_tag(prepend: str):
+    if not os.path.exists('metadata'):
+        os.mkdir('metadata')
+    if not os.path.exists(f'metadata/{create_param_tag()}'):
+        os.mkdir(f'metadata/{create_param_tag()}')
+        json.dump(metadata_json(), open(
+            f'metadata/{create_param_tag()}/metadata.json', 'w'))
+    return f'metadata/{create_param_tag()}/{prepend}.pkl'
 
 
 def get_block_base_label(i): return f'blocks.{i}'
@@ -84,7 +106,7 @@ def forward_on_block(model, block_idx: int, data: npt.NDArray):
 
 # TODO: optimize numb of clusters
 def GMM_method(dataset: torch.Tensor, layer: int, n_clusters_min=N_CLUSTERS_MIN, n_clusters_max=N_CLUSTERS_MAX, skip=30) -> KMeansMixture:
-    gm_name = get_save_tag(f'{layer}_clusters_GMM')
+    gm_name = get_and_prepare_save_tag(f'{layer}_clusters_GMM')
     torch.manual_seed(SEED)
 
     if os.path.exists(gm_name):
@@ -119,7 +141,7 @@ def forward_pass(model_lens: transformer_lens.HookedTransformer, t: str, layer: 
 def get_per_layer_emb_dataset(model_lens: transformer_lens.HookedTransformer, dataset: Dataset, layers: List[str], use_save=True) -> List[npt.NDArray]:
     layers_out = []
     for layer in layers:
-        ds_name = get_save_tag(f'{layer}_dataset_embd')
+        ds_name = get_and_prepare_save_tag(f'{layer}_dataset_embd')
 
         # TODO: DOES THIS WORK?
         if os.path.exists(ds_name) and use_save:
@@ -163,7 +185,7 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[KMeansMixture]
 
     distance_cutoff: If the distance between two centroids is greater than this, we will not consider them to be connected.
     """
-    save_name = get_save_tag('cluster_scores')
+    save_name = get_and_prepare_save_tag('cluster_scores')
     if os.path.exists(save_name):
         print("Loading cluster scores from cache")
         return pickle.load(open(save_name, 'rb'))
@@ -294,14 +316,15 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[KMeansMixture]
 #    return G, source, sink
 #
 
-def cutoff_lattice(lattice: List[List[List[float]]], related_cutoff = 1):
+def cutoff_lattice(lattice: List[List[List[float]]], related_cutoff=1):
     print(lattice[0].sum())
     r = [(layer > related_cutoff) * layer for layer in lattice]
     print(r[0].sum())
     return r
 
+
 def restrict_to_related_vertex(lattice: List[List[List[float]]], layer: int, idx: int, rel_cutoff: float) -> List[int]:
-    c_lattice = lattice #cutoff_lattice(lattice, related_cutoff=rel_cutoff)
+    c_lattice = lattice  # cutoff_lattice(lattice, related_cutoff=rel_cutoff)
     below_layers = range(layer)[::-1]
     above_layers = range(layer + 1, len(c_lattice) + 1)
 
@@ -312,7 +335,7 @@ def restrict_to_related_vertex(lattice: List[List[List[float]]], layer: int, idx
         new_layer = []
         for i, node in enumerate(below_layer):
             has_support = False
-            for c in curr_idx_set: # Check if there is outgoing support
+            for c in curr_idx_set:  # Check if there is outgoing support
                 if node[c] > rel_cutoff:
                     has_support = True
                     break
@@ -320,7 +343,7 @@ def restrict_to_related_vertex(lattice: List[List[List[float]]], layer: int, idx
                 new_layer.append((i, node[c]))
         lattice_below = [new_layer] + lattice_below
         curr_idx_set = [i for i, _ in new_layer]
-    
+
     curr_idx_set = [idx]
     lattice_above = []
     for above_layer in above_layers:
@@ -337,7 +360,7 @@ def restrict_to_related_vertex(lattice: List[List[List[float]]], layer: int, idx
         lattice_above = lattice_above + [new_layer]
 
     return lattice_below + [[(idx, 1)]] + lattice_above
-    
+
 
 # TODO: make this batched
 def score_tokens_for_path(embd_dataset: npt.NDArray,
@@ -361,7 +384,7 @@ def score_tokens_for_path(embd_dataset: npt.NDArray,
             probs = score_for_gmm(gmms[layer], torch.tensor(
                 tok[layer]
             ).to(device=DEFAULT_DEVICE))
-            similarity_metric =  probs[path[layer]]
+            similarity_metric = probs[path[layer]]
 
             score += similarity_metric * score_weighting_per_layer[layer]
         scores[i] = score
@@ -408,6 +431,7 @@ class Decomposer:
         np.random.seed(SEED)
         self.model_lens = model_lens
         # TODO: cutoff in random position
+
         def get_random_cutoff(t: str):
             if len(t) < N_TOKENS_CUTOFF:
                 return t
