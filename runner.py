@@ -15,7 +15,7 @@ ds = shuffled
 labs = [get_block_out_label(i) for i in range(N_BLOCKS)]
 
 
-# In[2]:
+# In[ ]:
 
 
 import importlib
@@ -26,13 +26,13 @@ decomp = cluster_model.Decomposer(model, ds, labs, similarity_cutoff=2)
 decomp.load()
 
 
-# In[3]:
+# In[ ]:
 
 
 decomp.lattice_scores[0].shape
 
 
-# In[4]:
+# In[ ]:
 
 
 from typing import List
@@ -58,7 +58,7 @@ modified_lattice = cutoff_lattice(decomp.lattice_scores, related_cutoff=15)
 # utils.top_k_dag_paths_dynamic(modified_lattice, k=10_000)
 
 
-# In[5]:
+# In[ ]:
 
 
 # TODO:
@@ -89,13 +89,13 @@ scores = decomp.score(
 )
 
 
-# In[6]:
+# In[ ]:
 
 
 min([min(s) for s in scores]), max([max(s) for s in scores])
 
 
-# In[7]:
+# In[ ]:
 
 
 from IPython.core.display import display, HTML
@@ -128,7 +128,7 @@ display(HTML(str(html)))
 
 # ## Isolate Specific Neurons
 
-# In[8]:
+# In[ ]:
 
 
 avoid_set = {
@@ -137,7 +137,7 @@ avoid_set = {
 }
 
 
-# In[9]:
+# In[ ]:
 
 
 import os
@@ -158,7 +158,7 @@ len(ret)
 
 # ## Try different scoring method
 
-# In[10]:
+# In[ ]:
 
 
 # importlib.reload(cluster_model)
@@ -171,7 +171,7 @@ len(ret)
 
 # ## Try more path like method
 
-# In[20]:
+# In[ ]:
 
 
 importlib.reload(cluster_model)
@@ -210,14 +210,14 @@ tokens = [[model.tokenizer.decode(t) for t in model.tokenizer(d)[
 tokens_reord = [tokens[i] for i in top_args]
 
 
-# In[21]:
+# In[ ]:
 
 
 scores_min = min([min(s) for s in scores_reord])
 # scores_rebal = [[(s - scores_min) for s in score] for score in scores_reord]
 
 
-# In[22]:
+# In[ ]:
 
 
 # TODO: WHAT IS HAPPENING WITH NAN?
