@@ -140,7 +140,7 @@ def calculate_matmul(mat_a, mat_b):
     return torch.sum(mat_a.squeeze(-2) * mat_b.squeeze(-1), dim=2, keepdim=True)
 
 def get_random_cutoff(t: str, size: int):
-    if len(t) < size:
+    if len(t) <= size:
         return t
     start_r = np.random.randint(0, len(t) - size)
     end = start_r + size
