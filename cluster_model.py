@@ -24,7 +24,7 @@ DATASET_NAME = 'NeelNanda/pile-10k'
 N_DIMS = 512
 SEED = 69_420
 
-DEBUG = True
+DEBUG = False
 
 if DEBUG:
     N_DATASIZE = 200
