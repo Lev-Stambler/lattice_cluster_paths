@@ -7,11 +7,14 @@ import numpy.typing as npt
 import torch
 import transformer_lens
 # from gmm import GaussianMixture
-from kmeansmixture_np import KMeansMixture
+# from kmeansmixture_np import KMeansMixture
 import hashlib
 import networkx as nx
 import json
 import utils
+from sklearn.mixture import GaussianMixture
+
+MixtureModel = GaussianMixture
 
 
 DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -20,6 +23,7 @@ DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 # TODO: separate PARAMS file?
 MODEL_NAME = 'EleutherAI/pythia-70m'
 DATASET_NAME = 'NeelNanda/pile-10k'
+MIXTURE_MODEL_TYPE = "GMM"
 
 N_DIMS = 512
 SEED = 69_420
@@ -41,11 +45,20 @@ else:
     N_BLOCKS = 6
     STRING_SIZE_CUTOFF = 700
 
+def metadata_json():
+    return {
+        'SEED': SEED,
+        'MIXTURE_MODEL_TYPE': MIXTURE_MODEL_TYPE,
+        'N_DATASIZE': N_DATASIZE,
+        'N_CLUSTERS_MIN': N_CLUSTERS_MIN,
+        'N_CLUSTERS_MAX': N_CLUSTERS_MAX,
+        'N_BLOCKS': N_BLOCKS,
+        'N_STRING_SIZE_CUTOFF': STRING_SIZE_CUTOFF
+    }
 
 def create_param_tag():
     m = hashlib.sha256()
-    m.update(
-        f'{MODEL_NAME}{DATASET_NAME}{SEED}{N_DATASIZE}{N_CLUSTERS_MIN}{N_CLUSTERS_MAX}{N_BLOCKS}{STRING_SIZE_CUTOFF}'.encode())
+    m.update(json.dumps(metadata_json()))
     return m.hexdigest()[:40]
 
 
@@ -53,7 +66,7 @@ def similarity_metric(a: torch.Tensor, b: torch.Tensor):
     return torch.sum(torch.exp(torch.multiply(a, b)))
 
 
-def score_for_gmm(gmm: KMeansMixture, a: torch.Tensor):
+def score_for_gmm(gmm: MixtureModel, a: torch.Tensor):
     """
     Return a score for how "close" a point is to the each cluster
 
@@ -117,22 +130,11 @@ def score_for_neuron(self, to_score: List[str], primary_layer: int,
     return top_tokens, top_score_idx, self.score(ds_scored, score_path, weighting_per_layer=weighting_per_layer)
 
 
-def similarity_for_gmm(gmm: KMeansMixture, a: torch.Tensor, b: torch.Tensor):
+def similarity_for_gmm(gmm: MixtureModel, a: torch.Tensor, b: torch.Tensor):
     preds_a = gmm.predict_proba(a.unsqueeze(0))
     preds_b = gmm.predict_proba(b.unsqueeze(0))
     return similarity_metric(preds_a, preds_b)
     # return np.inner(a, b)
-
-
-def metadata_json():
-    return {
-        'SEED': SEED,
-        'N_DATASIZE': N_DATASIZE,
-        'N_CLUSTERS_MIN': N_CLUSTERS_MIN,
-        'N_CLUSTERS_MAX': N_CLUSTERS_MAX,
-        'N_BLOCKS': N_BLOCKS,
-        'N_STRING_SIZE_CUTOFF': STRING_SIZE_CUTOFF
-    }
 
 
 def get_and_prepare_save_tag(prepend: str):
@@ -158,13 +160,13 @@ def forward_on_block(model, block_idx: int, data: npt.NDArray):
 
 
 # TODO: optimize numb of clusters
-def GMM_method(dataset: npt.NDArray, layer: int, n_clusters_min=N_CLUSTERS_MIN, n_clusters_max=N_CLUSTERS_MAX, skip=30) -> KMeansMixture:
+def GMM_method(dataset: npt.NDArray, layer: int, n_clusters_min=N_CLUSTERS_MIN, n_clusters_max=N_CLUSTERS_MAX, skip=30) -> MixtureModel:
     gm_name = get_and_prepare_save_tag(f'{layer}_clusters_GMM')
     torch.manual_seed(SEED)
 
     if os.path.exists(gm_name):
         print("Loading GMM clusters from cache")
-        gm = KMeansMixture(n_components=n_clusters_min,
+        gm = MixtureModel(n_components=n_clusters_min,
                            n_features=N_DIMS)
         gm.load_state_dict(torch.load(gm_name, map_location=DEFAULT_DEVICE))
         return gm.to(device=DEFAULT_DEVICE)
@@ -172,7 +174,7 @@ def GMM_method(dataset: npt.NDArray, layer: int, n_clusters_min=N_CLUSTERS_MIN, 
     # TODO: bin search
     for n_clusters in range(n_clusters_min, n_clusters_max, skip):
         print(f"Trying {n_clusters} clusters for layer {layer}")
-        gm = KMeansMixture(n_components=n_clusters_min,
+        gm = MixtureModel(n_components=n_clusters_min,
                            n_features=N_DIMS).to(device=DEFAULT_DEVICE)
         gm.fit(dataset, seed=SEED)
         torch.cuda.empty_cache()
@@ -245,7 +247,7 @@ def get_optimal_layer_gmm(dataset_np: npt.NDArray, layers: List[str], layer: str
     return gm
 
 
-def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[KMeansMixture], similarity_cutoff=float("-inf")) -> List[List[List[float]]]:
+def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[MixtureModel], similarity_cutoff=float("-inf")) -> List[List[List[float]]]:
     """
     We will take a bit of a short cut here. Rather than passing *representatives* from each centroid to find the "strength" on the following centroids,
     we will pass the *center* of each centroid to the next layer. This is a simplification, but it should be a good starting point and quite a bit faster.
@@ -469,7 +471,7 @@ def restrict_to_related_vertex(lattice: List[List[List[float]]], layer: int, idx
 
 # TODO: make this batched
 def score_tokens_for_path(embd_dataset: npt.NDArray,
-                          path: List[int], gmms: List[KMeansMixture],
+                          path: List[int], gmms: List[MixtureModel],
                           score_weighting_per_layer: npt.NDArray, BS=128):
     """
     embd_dataset: The outer index corresponds to the layer, the inner index corresponds to the token
@@ -480,11 +482,25 @@ def score_tokens_for_path(embd_dataset: npt.NDArray,
     print(token_per_layer.shape, path)
     assert token_per_layer.shape[1] == len(path)
 
+    for i in range(0, token_per_layer.shape[0], BS):
+        top_idx = min(i + BS, token_per_layer.shape[0])
+        for layer in range(len(path)):
+            local_scores = gmms[layer].predict_proba(torch.tensor(
+                token_per_layer[i:top_idx, layer]).to(device=DEFAULT_DEVICE))
+            local_scores = local_scores.detach().cpu().numpy()[:, path[layer]]
+            scores[i:top_idx] += local_scores * score_weighting_per_layer[layer]
+            # score_for_gmm(gmms[layer], torch.tensor(
+                # token_per_layer[i:top_idx, layer]).to(device=DEFAULT_DEVICE))
+            # similarity_metric = local_scores[:, path[layer]]
+            # scores[i:top_idx] += similarity_metric * \
+                # score_weighting_per_layer[layer]
+    return scores
+
     # TODO: refactor to bellow function and pull into utils
     for i in range(0, token_per_layer.shape[0], BS):
         top_idx = min(i + BS, token_per_layer.shape[0])
         mu_total = np.concatenate([gmms[layer].mu[path[layer]].cpu().numpy()
-                            for layer in range(len(path))], axis=-1)
+                                   for layer in range(len(path))], axis=-1)
         metric_total = np.ones(mu_total.shape[-1])
         sub_row_start = 0
         for layer in range(len(path)):
@@ -494,14 +510,13 @@ def score_tokens_for_path(embd_dataset: npt.NDArray,
             sub_row_start += curr_size
 
         metric_total = np.expand_dims(metric_total, 0)
-        print("METRIC TOTAL", metric_total.shape, metric_total)
+        # print("METRIC TOTAL", str(metric_total[0][512 * 3 + 1]))
         activations = np.concatenate([token_per_layer[i:top_idx, layer] for layer in range(
             len(path))], axis=-1)
         lhs = metric_total * activations
         rhs = metric_total * mu_total
         inner = np.inner(lhs, rhs).squeeze(-1)
         divisor = (np.linalg.norm(lhs, axis=-1) * np.linalg.norm(rhs, axis=-1))
-        print("INNER", inner.shape, divisor.shape)
         scores[i:top_idx] = inner / divisor
         # metric_total *
 
@@ -534,7 +549,7 @@ def get_dataset(name: str):
 
 
 class Decomposer:
-    gmms: List[KMeansMixture]
+    gmms: List[MixtureModel]
     lattice_scores: List[List[List[float]]]
 
     def __init__(self, model_lens, dataset: Dataset, layers: List[str], similarity_cutoff=19):
