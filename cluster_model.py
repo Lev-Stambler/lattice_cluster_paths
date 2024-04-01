@@ -485,7 +485,6 @@ def score_tokens_for_path(embd_dataset: npt.NDArray,
         top_idx = min(i + BS, token_per_layer.shape[0])
         mu_total = np.concatenate([gmms[layer].mu[path[layer]].cpu().numpy()
                             for layer in range(len(path))], axis=-1)
-        print("MU TOTAL", mu_total.shape)
         metric_total = np.ones(mu_total.shape[-1])
         sub_row_start = 0
         for layer in range(len(path)):
@@ -495,14 +494,14 @@ def score_tokens_for_path(embd_dataset: npt.NDArray,
             sub_row_start += curr_size
 
         metric_total = np.expand_dims(metric_total, 0)
-        print("METRIC TOTAL", metric_total.shape)
+        print("METRIC TOTAL", metric_total.shape, metric_total)
         activations = np.concatenate([token_per_layer[i:top_idx, layer] for layer in range(
             len(path))], axis=-1)
-        print("ACTIVATIONS", activations.shape)
         lhs = metric_total * activations
         rhs = metric_total * mu_total
-        inner = np.inner(lhs, rhs)
-        divisor = np.linalg.norm(lhs) * np.linalg.norm(rhs)
+        inner = np.inner(lhs, rhs).squeeze(-1)
+        divisor = (np.linalg.norm(lhs, axis=-1) * np.linalg.norm(rhs, axis=-1))
+        print("INNER", inner.shape, divisor.shape)
         scores[i:top_idx] = inner / divisor
         # metric_total *
 
