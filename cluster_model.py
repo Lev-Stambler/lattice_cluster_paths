@@ -24,7 +24,7 @@ DATASET_NAME = 'NeelNanda/pile-10k'
 N_DIMS = 512
 SEED = 69_420
 
-DEBUG = True
+DEBUG = False
 
 if DEBUG:
     N_DATASIZE = 200
@@ -206,7 +206,6 @@ def get_per_layer_emb_dataset(model_lens: transformer_lens.HookedTransformer, da
             pickle.dump(dataset_np, open(ds_name, 'wb'))
         layers_out.append(dataset_np)
     return np.stack(layers_out, axis=0)
-
 
     # layers_out = []
     # for layer in layers:
@@ -481,43 +480,41 @@ def score_tokens_for_path(embd_dataset: npt.NDArray,
     print(token_per_layer.shape, path)
     assert token_per_layer.shape[1] == len(path)
 
+    # TODO: refactor to bellow function and pull into utils
     for i in range(0, token_per_layer.shape[0], BS):
         top_idx = min(i + BS, token_per_layer.shape[0])
+        mu_total = np.concatenate([gmms[layer].mu[path[layer]].cpu().numpy()
+                            for layer in range(len(path))], axis=-1)
+        print("MU TOTAL", mu_total.shape)
+        metric_total = np.ones(mu_total.shape[-1])
+        sub_row_start = 0
         for layer in range(len(path)):
-            probs = score_for_gmm(gmms[layer], torch.tensor(
-                token_per_layer[i:top_idx, layer]).to(device=DEFAULT_DEVICE))
-            similarity_metric = probs[:, path[layer]]
-            scores[i:top_idx] += similarity_metric * \
-                score_weighting_per_layer[layer]
+            curr_size = gmms[layer].mu[path[layer]].shape[-1]
+            metric_total[sub_row_start:sub_row_start +
+                         curr_size] *= np.sqrt(score_weighting_per_layer[layer])
+            sub_row_start += curr_size
 
-    # for i, tok in enumerate(token_per_layer):
-    #     score = 0
-    #     for layer in range(len(path)):
-    #         # TODO: change
-    #         selector = np.zeros(gmms[layer].n_components)
-    #         selector[path[layer]] = 1
-    #         probs = score_for_gmm(gmms[layer], torch.tensor(
-    #             tok[layer]
-    #         ).to(device=DEFAULT_DEVICE))
-    #         similarity_metric = probs[path[layer]]
+        metric_total = np.expand_dims(metric_total, 0)
+        print("METRIC TOTAL", metric_total.shape)
+        activations = np.concatenate([token_per_layer[i:top_idx, layer] for layer in range(
+            len(path))], axis=-1)
+        print("ACTIVATIONS", activations.shape)
+        lhs = metric_total * activations
+        rhs = metric_total * mu_total
+        inner = np.inner(lhs, rhs)
+        divisor = np.linalg.norm(lhs) * np.linalg.norm(rhs)
+        scores[i:top_idx] = inner / divisor
+        # metric_total *
 
-    #         score += similarity_metric * score_weighting_per_layer[layer]
-    #     scores[i] = score
+        # for layer in range(len(path)):
+        #     gmms[layer].mu[path[layer]]
+        #     local_scores = score_for_gmm(gmms[layer], torch.tensor(
+        #         token_per_layer[i:top_idx, layer]).to(device=DEFAULT_DEVICE))
+        #     similarity_metric = local_scores[:, path[layer]]
+        #     scores[i:top_idx] += similarity_metric * \
+        #         score_weighting_per_layer[layer]
 
     return scores
-
-
-# def find_max_weight(cluster_scores: List[List[npt.NDArray]], K=100):
-#     """
-#     Find the maximum flow through the lattice
-
-#     https://www.usenix.org/conference/atc18/presentation/gong We can find the top K max flows with the "Heavy Keeper" Algorithm
-#     """
-#     G, source, sink = to_nx_graph(cluster_scores)
-#     paths = utils.top_k_paths_to_end(G, source, sink, K)
-#     # paths = utils.find_top_k_paths(G, source, sink, K)
-#     print("GOT PATHS", paths)
-    # return None, G
 
 
 def get_transformer(name: str, device=DEFAULT_DEVICE):

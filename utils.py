@@ -4,7 +4,7 @@ import numpy as np
 from einops import rearrange
 import networkx as nx
 import heapq
-import transformer_lens
+import numpy.typing as npt
 # TODO: this is just a c and p rn
 
 # Get the activations for the best dict features
@@ -145,3 +145,6 @@ def get_random_cutoff(t: str, size: int):
     start_r = np.random.randint(0, len(t) - size)
     end = start_r + size
     return t[start_r:end]
+
+def cosine_similarity_with_metric(a: npt.NDArray, b: npt.NDArray, metric: npt.NDArray):
+        return np.inner(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
