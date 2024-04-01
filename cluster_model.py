@@ -32,8 +32,8 @@ DEBUG = False
 
 if DEBUG:
     N_DATASIZE = 200
-    N_CLUSTERS_MIN = 50
-    N_CLUSTERS_MAX = 51
+    N_CLUSTERS_MIN = 20
+    N_CLUSTERS_MAX = 21
     N_BLOCKS = 6
     STRING_SIZE_CUTOFF = 200
 else:
@@ -44,6 +44,7 @@ else:
     N_CLUSTERS_MAX = N_DIMS + 1
     N_BLOCKS = 6
     STRING_SIZE_CUTOFF = 700
+
 
 def metadata_json():
     return {
@@ -56,9 +57,10 @@ def metadata_json():
         'N_STRING_SIZE_CUTOFF': STRING_SIZE_CUTOFF
     }
 
+
 def create_param_tag():
     m = hashlib.sha256()
-    m.update(json.dumps(metadata_json()))
+    m.update(json.dumps(metadata_json()).encode('utf-8'))
     return m.hexdigest()[:40]
 
 
@@ -164,22 +166,21 @@ def GMM_method(dataset: npt.NDArray, layer: int, n_clusters_min=N_CLUSTERS_MIN, 
     gm_name = get_and_prepare_save_tag(f'{layer}_clusters_GMM')
     torch.manual_seed(SEED)
 
+    # TODO: you have to load meta params...
     if os.path.exists(gm_name):
         print("Loading GMM clusters from cache")
-        gm = MixtureModel(n_components=n_clusters_min,
-                           n_features=N_DIMS)
-        gm.load_state_dict(torch.load(gm_name, map_location=DEFAULT_DEVICE))
-        return gm.to(device=DEFAULT_DEVICE)
+        gm = MixtureModel(n_components=n_clusters_min)
+        #    n_features=N_DIMS)
+        gm = pickle.load(open(gm_name, 'rb'))
+        # gm.load_state_dict(torch.load(gm_name, map_location=DEFAULT_DEVICE))
+        return gm
 
     # TODO: bin search
     for n_clusters in range(n_clusters_min, n_clusters_max, skip):
         print(f"Trying {n_clusters} clusters for layer {layer}")
-        gm = MixtureModel(n_components=n_clusters_min,
-                           n_features=N_DIMS).to(device=DEFAULT_DEVICE)
-        gm.fit(dataset, seed=SEED)
-        torch.cuda.empty_cache()
-        torch.save(gm.state_dict(), gm_name)
-        # pickle.dump(gm, open(gm_name, 'wb'))
+        gm = MixtureModel(n_components=n_clusters_min)
+        gm.fit(dataset)
+        pickle.dump(gm, open(gm_name, 'wb'))
         # silhouette_avg = silhouette_score(dataset, gm_name)
         # print(f"Silhouette score: {silhouette_avg}")
         return gm
@@ -282,48 +283,21 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[MixtureModel],
         BS = 128
         for tok_idx in range(0, ds.shape[0], BS):
             tok = ds[tok_idx:min(tok_idx + BS, len(ds))]
-            pred_curr = torch.nan_to_num(gmms[curr_layer_idx].predict_proba(
-                torch.tensor(tok[:, curr_layer_idx]).to(device=DEFAULT_DEVICE)))
-            pred_next = torch.nan_to_num(gmms[next_layer_idx].predict_proba(
-                torch.tensor(tok[:, next_layer_idx]).to(device=DEFAULT_DEVICE)))
+            pred_curr = np.nan_to_num(gmms[curr_layer_idx].predict_proba(
+                tok[:, curr_layer_idx]))
+            pred_next = np.nan_to_num(gmms[next_layer_idx].predict_proba(
+                tok[:, next_layer_idx]))
 
             batch_size = pred_curr.shape[0]
             # TODO: does this give us correlation??
             # TODO: prob way to use batching here
             # indexing_matrix =
+            # TODO: batch
             for i in range(batch_size):
-                # if pred_curr[i].sum() != 0 and pred_next[i].sum() != 0:
-                #     print("NON TRIVIAL", pred_curr[i], pred_next[i])
-                corrs = torch.outer(pred_curr[i], pred_next[i])
+                corrs = np.outer(pred_curr[i], pred_next[i])
                 # Set the corresponding correlations to the matrix
-                to_next_layer_sim += corrs.detach().cpu().numpy()
-                # for c1, pred_on_curr in enumerate(pred_curr[i]):
-                # for c2, pred_on_next in enumerate(pred_next[i]):
-                # to_next_layer_sim[c1, c2] += pred_on_next * pred_on_curr
+                to_next_layer_sim += corrs
 
-            # return to_next_layer_sim
-
-            # # print("PRED CURR", pred_curr)
-            # high_weight_currs = torch.nonzero(
-            #     pred_curr > HIGH_WEIGHT_PROB, as_tuple=True)
-
-            # high_weight_nexts = torch.nonzero(
-            #     pred_next > HIGH_WEIGHT_PROB, as_tuple=True)
-            # # print("WITH BATCH", high_weight_currs, high_weight_nexts)
-            # for i in range(BS):
-            #     col_idxs_curr = np.nonzero(
-            #         high_weight_currs[0].detach().cpu().numpy() == i)[0]
-            #     col_idxs_next = np.nonzero(
-            #         high_weight_nexts[0].detach().cpu().numpy() == i)[0]
-
-            #     high_weight_curr = high_weight_currs[1][col_idxs_curr].detach(
-            #     ).cpu().numpy()
-            #     high_weight_next = high_weight_nexts[1][col_idxs_next].detach(
-            #     ).cpu().numpy()
-            #     # print("INDEP", high_weight_curr, high_weight_next)
-            #     for x in high_weight_curr:
-            #         for y in high_weight_next:
-            #             to_next_layer_sim[x, y] += 1
         return to_next_layer_sim
 
     cluster_scores = []
@@ -337,53 +311,6 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[MixtureModel],
     pickle.dump(cluster_scores, open(save_name, 'wb'))
     return cluster_scores
 
-
-# def to_nx_graph(cluster_scores: List[List[npt.NDArray]]) -> nx.DiGraph:
-#    SCALING_RESOLUTION = 1000
-#    node_idx = 0
-#    source = 0
-#    node_idx += 1
-#    # We need to account for all outgoing from the end
-#    n_clusters = sum([len(cs) for cs in cluster_scores]) + \
-#        len(cluster_scores[-1][0])
-#    eps = 1e-6
-#    most_neg = (min([min([min(c) for c in cs])
-#                for cs in cluster_scores])) + eps
-#    print(f"Most negative absolute value: {most_neg}")
-#    most_neg_abs = abs(most_neg)
-#
-#    print(f"We have {n_clusters} clusters")
-#
-#    G = nx.DiGraph()
-#    last_layer_start_idx = -1
-#    for layer in range(len(cluster_scores)):
-#        layer_start_idx = node_idx
-#        n_in_layer = len(cluster_scores[layer])
-#        if layer == len(cluster_scores) - 1:
-#            last_layer_start_idx = layer_start_idx + n_in_layer - 1
-#        for _, node_cs in enumerate(cluster_scores[layer]):
-#            for j, c in enumerate(node_cs):
-#                next_idx = layer_start_idx + n_in_layer + j
-#                # TODO: ROUNDING ISSUES?!!?
-#                # csgraph[node_idx, next_idx] = round(c)
-#                if c + most_neg_abs > 0:
-#                    w = round((c + most_neg_abs) * SCALING_RESOLUTION)
-#                # print("AAA", w, node_idx, next_idx)
-#                G.add_edge(node_idx, next_idx, weight=w)
-#            node_idx += 1
-#
-#    sink = n_clusters
-#
-#    for i, _ in enumerate(cluster_scores[0]):
-#        # Set source to first layer
-#        G.add_edge(source, i + 1, weight=1)
-#    for i in range(len(cluster_scores[-1])):
-#        G.add_edge(last_layer_start_idx + i, sink, weight=1)
-#
-#    # nx.draw(G, with_labels=True, pos=nx.nx_pydot.graphviz_layout(G, prog='dot'))
-#    # plt.savefig("graph.png")
-#    return G, source, sink
-#
 
 def cutoff_lattice(lattice: List[List[List[float]]], related_cutoff=1):
     print(lattice[0].sum())
@@ -485,15 +412,10 @@ def score_tokens_for_path(embd_dataset: npt.NDArray,
     for i in range(0, token_per_layer.shape[0], BS):
         top_idx = min(i + BS, token_per_layer.shape[0])
         for layer in range(len(path)):
-            local_scores = gmms[layer].predict_proba(torch.tensor(
-                token_per_layer[i:top_idx, layer]).to(device=DEFAULT_DEVICE))
-            local_scores = local_scores.detach().cpu().numpy()[:, path[layer]]
-            scores[i:top_idx] += local_scores * score_weighting_per_layer[layer]
-            # score_for_gmm(gmms[layer], torch.tensor(
-                # token_per_layer[i:top_idx, layer]).to(device=DEFAULT_DEVICE))
-            # similarity_metric = local_scores[:, path[layer]]
-            # scores[i:top_idx] += similarity_metric * \
-                # score_weighting_per_layer[layer]
+            local_scores = gmms[layer].predict_proba(token_per_layer[i:top_idx, layer])
+            local_scores = local_scores[:, path[layer]]
+            scores[i:top_idx] += local_scores * \
+                score_weighting_per_layer[layer]
     return scores
 
     # TODO: refactor to bellow function and pull into utils
