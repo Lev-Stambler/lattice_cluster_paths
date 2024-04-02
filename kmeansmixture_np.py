@@ -86,16 +86,19 @@ class KMeansMixture():
         mu = np.expand_dims(self.mu, 0)
         assert x.shape[2] == mu.shape[2]
         subed_shape = (x.shape[0], mu.shape[1], mu.shape[2])
-        if mmep_name:
+        if mmep_name is not None:
+            print("SUBED SHAPE", subed_shape)
             subed = np.memmap(mmep_name, dtype='float32',
                               mode='w+', shape=subed_shape)
             subed = np.subtract(mu, x, out=subed)
         else:
             subed = np.subtract(mu, x)
+        print("DID SUB")
         
         exp_inner = -1 * \
             (np.linalg.norm(subed, axis=-1) ** 2) / (2 * kernel_width ** 2)
         K_mu_x = np.exp(exp_inner)
+        if mmep_name: print("DONE WITH RBF")
         return K_mu_x
 
     def predict_proba(self, x):
