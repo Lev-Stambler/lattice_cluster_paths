@@ -79,16 +79,19 @@ class KMeansMixture():
         squared_distances = (diff ** 2).sum(-1)
         return squared_distances
 
-    def predict_proba_rbf(self, x):
+    def predict_proba_rbf(self, x, mmep_name=None):
         # TODO: WHAT NUMBER FOR KNERAL WIDTH?
         kernel_width = 1.0
         x = self.check_size(x)
         mu = np.expand_dims(self.mu, 0)
         assert x.shape[2] == mu.shape[2]
         subed_shape = (x.shape[0], mu.shape[1], mu.shape[2])
-        subed = np.memmap(f'/tmp/mmat_proba_sub.dat', dtype='float32',
-                          mode='w+', shape=subed_shape)
-        subed = np.subtract(mu, x, out=subed)
+        if mmep_name:
+            subed = np.memmap(mmep_name, dtype='float32',
+                              mode='w+', shape=subed_shape)
+            subed = np.subtract(mu, x, out=subed)
+        else:
+            subed = np.subtract(mu, x)
         
         exp_inner = -1 * \
             (np.linalg.norm(subed, axis=-1) ** 2) / (2 * kernel_width ** 2)
