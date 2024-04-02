@@ -84,8 +84,14 @@ class KMeansMixture():
         kernel_width = 1.0
         x = self.check_size(x)
         mu = np.expand_dims(self.mu, 0)
+        assert x.shape[2] == mu.shape[2]
+        subed_shape = (x.shape[0], mu.shape[1], mu.shape[2])
+        subed = np.memmap(f'/tmp/mmat_proba_sub.dat', dtype='float32',
+                          mode='w+', shape=subed_shape)
+        subed = np.subtract(mu, x, out=subed)
+        
         exp_inner = -1 * \
-            (np.linalg.norm(mu - x, axis=-1) ** 2) / (2 * kernel_width ** 2)
+            (np.linalg.norm(subed, axis=-1) ** 2) / (2 * kernel_width ** 2)
         K_mu_x = np.exp(exp_inner)
         return K_mu_x
 
