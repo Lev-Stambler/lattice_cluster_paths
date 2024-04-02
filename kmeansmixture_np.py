@@ -88,8 +88,9 @@ class KMeansMixture():
         subed_shape = (x.shape[0], mu.shape[1], mu.shape[2])
         if mmep_name is not None:
             print("SUBED SHAPE", subed_shape)
-            subed = np.memmap(mmep_name, dtype='float32',
-                              mode='w+', shape=subed_shape)
+            # subed = np.memmap(mmep_name, dtype='float32',
+            #                   mode='w+', shape=subed_shape)
+            subed = np.zeros(subed_shape)
             BS = 8_192
             # TODO: VARIABLE BS
             for i in range(0, x.shape[0], BS):
