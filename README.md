@@ -17,3 +17,8 @@ added right after
             selected = torch.index_select(X, 0, selected)
 
 ```
+
+## NEXT STEPS
+We *NEED* some easier way to both run the tests to give what goes where and also to **auto-ish** generate an interoperability score
+
+Its also not at all clear what makes a path a good "interoperability" path. We need to define this better. I think we can use ideas of "entropy" collapse. I.e. we want to think about how **strongly** a path causes entropy to collapse. I.e. we want to be certain that the path is lit up without having the *whole dataset* light up on said path.
