@@ -90,7 +90,7 @@ class KMeansMixture():
             print("SUBED SHAPE", subed_shape)
             subed = np.memmap(mmep_name, dtype='float32',
                               mode='w+', shape=subed_shape)
-            subed = np.subtract(mu, x, out=subed)
+            np.subtract(mu, x, out=subed)
         else:
             subed = np.subtract(mu, x)
         print("DID SUB")
