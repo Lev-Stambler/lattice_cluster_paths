@@ -30,7 +30,7 @@ MIXTURE_MODEL_TYPE = "KMenas"
 N_DIMS = 512
 SEED = 69_420
 
-DEBUG = True
+DEBUG = False
 
 if DEBUG:
     N_DATASIZE = 200
