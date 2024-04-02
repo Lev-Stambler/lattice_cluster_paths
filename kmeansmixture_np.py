@@ -79,34 +79,60 @@ class KMeansMixture():
         squared_distances = (diff ** 2).sum(-1)
         return squared_distances
 
-    def predict_proba_rbf(self, x, mmep_name=None):
+    def _rbf_kernel(self, x, mu, kernel_width):
+        """
+        Returns RBF kernel.
+        args:
+            x:              torch.Tensor (n, d)
+            mu:             torch.Tensor (k, d)
+            kernel_width:   float
+        returns:
+            K_mu_x:         torch.Tensor (n, k)
+        """
+        subed = mu - x
+        exp_inner = -1 * \
+            (np.linalg.norm(subed, axis=-1) ** 2) / (2 * kernel_width ** 2)
+        K_mu_x = np.exp(exp_inner)
+        return K_mu_x
+
+    def predict_proba_rbf(self, x, batch_size=-1):
         # TODO: WHAT NUMBER FOR KNERAL WIDTH?
         kernel_width = 1.0
         x = self.check_size(x)
         mu = np.expand_dims(self.mu, 0)
         assert x.shape[2] == mu.shape[2]
-        subed_shape = (x.shape[0], mu.shape[1], mu.shape[2])
-        if mmep_name is not None:
-            print("SUBED SHAPE", subed_shape)
-            # subed = np.memmap(mmep_name, dtype='float32',
-            #                   mode='w+', shape=subed_shape)
-            subed = np.zeros(subed_shape)
-            BS = 8_192
-            # TODO: VARIABLE BS
-            for i in range(0, x.shape[0], BS):
-                top = min(i + BS, x.shape[0])
-                subed[i:top] = np.subtract(mu, x[i:top])
-                print("ON", i)
-            # subed[:] = np.subtract(mu, x)
-        else:
-            subed = np.subtract(mu, x)
-        print("DID SUB")
+
+        if batch_size > 0:
+            out = np.zeros((x.shape[0], mu.shape[1]))
+            for i in range(0, x.shape[0], batch_size):
+                top = min(i + batch_size, x.shape[0])
+                out[i:top] = self._rbf_kernel(x[i:top], mu, kernel_width)
+            return out
+        return self._rbf_kernel(x, mu, kernel_width)
+
+
+        # subed_shape = (x.shape[0], mu.shape[1], mu.shape[2])
+        # if mmep_name is not None:
+        #     print("SUBED SHAPE", subed_shape)
+        #     # subed = np.memmap(mmep_name, dtype='float32',
+        #     #                   mode='w+', shape=subed_shape)
+        #     subed = np.zeros(subed_shape)
+        #     BS = 8_192
+        #     # TODO: VARIABLE BS
+        #     for i in range(0, x.shape[0], BS):
+        #         top = min(i + BS, x.shape[0])
+        #         subed[i:top] = np.subtract(mu, x[i:top])
+        #         print("ON", i)
+        #     # subed[:] = np.subtract(mu, x)
+        # else:
+        #     subed = np.subtract(mu, x)
+        # print("DID SUB")
         
-        exp_inner = -1 * \
-            (np.linalg.norm(subed, axis=-1) ** 2) / (2 * kernel_width ** 2)
-        K_mu_x = np.exp(exp_inner)
-        if mmep_name: print("DONE WITH RBF")
-        return K_mu_x
+        # exp_inner = -1 * \
+        #     (np.linalg.norm(subed, axis=-1) ** 2) / (2 * kernel_width ** 2)
+        # K_mu_x = np.exp(exp_inner)
+        # if mmep_name: print("DONE WITH RBF")
+        # return K_mu_x
 
     def predict_proba(self, x):
         """
