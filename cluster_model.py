@@ -264,66 +264,36 @@ def cluster_model_lattice(ds: npt.NDArray, gmms: List[MixtureModel]) -> List[Lis
 
     print("Getting cluster scores for lattice")
 
+    # Use mm
+    # TODO: RM the memmap stuff after
+
     probs_for_all_layers = [
-        np.memmap('/tmp/mmatA.dat', dtype='float32',
-                       mode='w+', shape=(gmms[layer].n_components, ds.shape[1]))
-                for layer in range(ds.shape[0])]
+        np.memmap(f'/tmp/mmat_prob_layer_{layer}.dat', dtype='float32',
+                  mode='w+', shape=(gmms[layer].n_components, ds.shape[1]))
+        for layer in range(ds.shape[0])]
     for l in probs_for_all_layers:
         l[:] = 0.0
+    print("Set all initial to 0")
 
     for i in range(len(gmms)):
+        ds_mmep = np.memmap(
+            f'/tmp/mmat_{ds}_{i}.dat', dtype='float32', mode='w+', shape=ds.shape)
+        ds_mmep[:] = ds[i]
         preds = np.nan_to_num(gmms[i].predict_proba_rbf(
-            ds[i]), nan=0.0).T
+            ds_mmep), nan=0.0).T
         probs_for_all_layers[i, :] = preds
+    print("Set all probs with predictions")
 
     def score_cluster_to_next(curr_layer_idx: int, next_layer_idx: int) -> List[float]:
         coeffs = utils.pairwise_pearson_coefficient(
             probs_for_all_layers[curr_layer_idx], probs_for_all_layers[next_layer_idx])
         print("COEFF STUFF", probs_for_all_layers[curr_layer_idx].max(), probs_for_all_layers[curr_layer_idx].min(),
-               coeffs.shape, coeffs.min(), coeffs.max())
+              coeffs.shape, coeffs.min(), coeffs.max())
         return coeffs
-
-    # def score_cluster_to_next(curr_layer_idx: int, next_layer_idx: int, metric_cutoff: float = None) -> List[float]:
-    #     """
-    #     Score the cluster to the next clusters.
-    #     Set any score to 0 if the distance between the two centroids is greater than the distance_cutoff
-
-    #     TODO: notes
-    #     We actually want to model **correlation** between the clusters. We can just use the Pearson correlation coefficient for this! (https://en.wikipedia.org/wiki/Pearson_correlation_coefficient)
-
-    #     """
-    #     print("Getting scores for layers", curr_layer_idx, "to", next_layer_idx)
-    #     # HIGH_WEIGHT_PROB = 0.5
-
-    #     to_next_layer_sim = np.zeros(
-    #         (gmms[curr_layer_idx].n_components, gmms[next_layer_idx].n_components), dtype=float)
-
-    #     # I think that I am missing a step here
-    #     BS = 128
-
-    #     for tok_idx in range(0, ds.shape[0], BS):
-    #         toks = ds[tok_idx:min(tok_idx + BS, len(ds))]
-
-    #         pred_curr = np.nan_to_num(gmms[curr_layer_idx].predict_proba_rbf(
-    #             toks[:, curr_layer_idx]), nan=0.0)
-    #         pred_next = np.nan_to_num(gmms[next_layer_idx].predict_proba_rbf(
-    #             toks[:, next_layer_idx]), nan=0.0)
-
-    #         # Alternately
-
-    #         batch_size = pred_curr.shape[0]
-    #         # If the predictions match up, we will add the correlation to the matrix
-    #         # TODO: WE ARE USING THE RBF KERNEL HERE... is that okay??
-    #         for i in range(batch_size):
-    #             corrs = np.outer(pred_curr[i], pred_next[i])
-    #             # Set the corresponding correlations to the matrix
-    #             print("Adding corrs", corrs)
-    #             to_next_layer_sim += corrs
-
-    #     return to_next_layer_sim
 
     cluster_scores = []
     for layer in range(len(gmms) - 1):
+        print(f"Scoring layer {layer}")
         scores_to_next = score_cluster_to_next(
             layer, layer + 1)
         # TODO: into sparse matrix and then list??
