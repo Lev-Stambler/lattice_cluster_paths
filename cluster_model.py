@@ -7,14 +7,15 @@ import numpy.typing as npt
 import torch
 import transformer_lens
 # from gmm import GaussianMixture
-# from kmeansmixture_np import KMeansMixture
+from kmeansmixture_np import KMeansMixture
 import hashlib
 import networkx as nx
 import json
 import utils
 from sklearn.mixture import GaussianMixture
 
-MixtureModel = GaussianMixture
+MixtureModel = KMeansMixture
+# Use RBF Kernel https://en.wikipedia.org/wiki/Radial_basis_function_kernel
 
 
 DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -23,12 +24,12 @@ DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 # TODO: separate PARAMS file?
 MODEL_NAME = 'EleutherAI/pythia-70m'
 DATASET_NAME = 'NeelNanda/pile-10k'
-MIXTURE_MODEL_TYPE = "GMM"
+MIXTURE_MODEL_TYPE = "KMenas"
 
 N_DIMS = 512
 SEED = 69_420
 
-DEBUG = False
+DEBUG = True
 
 if DEBUG:
     N_DATASIZE = 200
@@ -169,7 +170,7 @@ def GMM_method(dataset: npt.NDArray, layer: int, n_clusters_min=N_CLUSTERS_MIN, 
     # TODO: you have to load meta params...
     if os.path.exists(gm_name):
         print("Loading GMM clusters from cache")
-        gm = MixtureModel(n_components=n_clusters_min)
+        gm = MixtureModel(n_components=n_clusters_min, n_features=N_DIMS)
         #    n_features=N_DIMS)
         gm = pickle.load(open(gm_name, 'rb'))
         # gm.load_state_dict(torch.load(gm_name, map_location=DEFAULT_DEVICE))
@@ -178,8 +179,8 @@ def GMM_method(dataset: npt.NDArray, layer: int, n_clusters_min=N_CLUSTERS_MIN, 
     # TODO: bin search
     for n_clusters in range(n_clusters_min, n_clusters_max, skip):
         print(f"Trying {n_clusters} clusters for layer {layer}")
-        gm = MixtureModel(n_components=n_clusters_min)
-        gm.fit(dataset)
+        gm = MixtureModel(n_components=n_clusters_min, n_features=N_DIMS)
+        gm.fit(dataset, seed=SEED)
         pickle.dump(gm, open(gm_name, 'wb'))
         # silhouette_avg = silhouette_score(dataset, gm_name)
         # print(f"Silhouette score: {silhouette_avg}")
@@ -248,7 +249,7 @@ def get_optimal_layer_gmm(dataset_np: npt.NDArray, layers: List[str], layer: str
     return gm
 
 
-def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[MixtureModel], similarity_cutoff=float("-inf")) -> List[List[List[float]]]:
+def cluster_model_lattice(ds: npt.NDArray, gmms: List[MixtureModel], similarity_cutoff=float("-inf")) -> List[List[List[float]]]:
     """
     We will take a bit of a short cut here. Rather than passing *representatives* from each centroid to find the "strength" on the following centroids,
     we will pass the *center* of each centroid to the next layer. This is a simplification, but it should be a good starting point and quite a bit faster.
@@ -283,10 +284,11 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[MixtureModel],
         BS = 128
         for tok_idx in range(0, ds.shape[0], BS):
             tok = ds[tok_idx:min(tok_idx + BS, len(ds))]
-            pred_curr = np.nan_to_num(gmms[curr_layer_idx].predict_proba(
-                tok[:, curr_layer_idx]))
-            pred_next = np.nan_to_num(gmms[next_layer_idx].predict_proba(
-                tok[:, next_layer_idx]))
+            pred_curr = np.nan_to_num(gmms[curr_layer_idx].predict_proba_rbf(
+                tok[:, curr_layer_idx]), nan=0.0)
+            pred_next = np.nan_to_num(gmms[next_layer_idx].predict_proba_rbf(
+                tok[:, next_layer_idx]), nan=0.0)
+
 
             batch_size = pred_curr.shape[0]
             # TODO: does this give us correlation??
@@ -296,6 +298,7 @@ def cluster_model_lattice(model_lens, ds: npt.NDArray, gmms: List[MixtureModel],
             for i in range(batch_size):
                 corrs = np.outer(pred_curr[i], pred_next[i])
                 # Set the corresponding correlations to the matrix
+                print("Adding corrs", corrs)
                 to_next_layer_sim += corrs
 
         return to_next_layer_sim
@@ -412,7 +415,7 @@ def score_tokens_for_path(embd_dataset: npt.NDArray,
     for i in range(0, token_per_layer.shape[0], BS):
         top_idx = min(i + BS, token_per_layer.shape[0])
         for layer in range(len(path)):
-            local_scores = gmms[layer].predict_proba(token_per_layer[i:top_idx, layer])
+            local_scores = gmms[layer].predict_proba_rbf(token_per_layer[i:top_idx, layer])
             local_scores = local_scores[:, path[layer]]
             scores[i:top_idx] += local_scores * \
                 score_weighting_per_layer[layer]
@@ -477,6 +480,7 @@ class Decomposer:
     def __init__(self, model_lens, dataset: Dataset, layers: List[str], similarity_cutoff=19):
         torch.manual_seed(SEED)
         np.random.seed(SEED)
+        print(f"Creating decomposer with parameter hash {create_param_tag()}")
         self.model_lens = model_lens
         # TODO: cutoff in random position
 
@@ -495,7 +499,7 @@ class Decomposer:
             self.gmms.append(get_optimal_layer_gmm(
                 self.ds_emb, self.layers, self.layers[i]))
         self.lattice_scores = cluster_model_lattice(
-            self.model_lens, self.ds_emb, self.gmms, self.similarity_cutoff)
+            self.ds_emb, self.gmms, self.similarity_cutoff)
 
     def _get_ds_metadata(self, ds: List[str], embeds: npt.NDArray = None):
         if embeds is None:

@@ -3,17 +3,17 @@ import numpy as np
 from sklearn.cluster import MiniBatchKMeans
 import numpy.typing as npt
 
-class KMeansMixture(torch.nn.Module):
+
+class KMeansMixture():
     """
     """
 
     def __init__(self, n_components, n_features):
-        super(KMeansMixture, self).__init__()
 
         self.n_components = n_components
         self.n_features = n_features
-        self.mu = torch.nn.Parameter(torch.randn(
-            self.n_components, self.n_features), requires_grad=False)
+        self.mu = torch.randn(
+            self.n_components, self.n_features).cpu().detach().numpy()
 
         self._init_params()
 
@@ -36,19 +36,19 @@ class KMeansMixture(torch.nn.Module):
                                  n_init="auto")
 
         kmeans.fit(x)
-        self.mu = torch.nn.Parameter(torch.tensor( kmeans.cluster_centers_))
+        self.mu = kmeans.cluster_centers_
 
         # cluster_ids_x, cluster_centers = kmeans(
-            # X=x, num_clusters=self.n_components,
-            # distance='euclidean', device=x.device,
+        # X=x, num_clusters=self.n_components,
+        # distance='euclidean', device=x.device,
         # )
         # print("CLUSTER SHAPE", cluster_centers.shape)
         # self.mu = torch.nn.Parameter(cluster_centers)
 
     def check_size(self, x):
-        if len(x.size()) == 2:
+        if len(x.shape) == 2:
             # (n, d) --> (n, 1, d)
-            x = x.unsqueeze(1)
+            x = np.expand_dims(x, axis=1)
 
         return x
 
@@ -62,8 +62,8 @@ class KMeansMixture(torch.nn.Module):
         """
         x = self.check_size(x)
 
-        mu = self.mu.unsqueeze(0).to(x.device)
-        return torch.sum(x * mu, dim=-1)
+        mu = np.expand_dims(self.mu, 0)
+        return np.sum(x * mu, dim=-1)
 
     def distances_squared(self, x):
         """
@@ -78,6 +78,16 @@ class KMeansMixture(torch.nn.Module):
         diff = x - self.mu.unsqueeze(0).to(x.device)
         squared_distances = (diff ** 2).sum(-1)
         return squared_distances
+
+    def predict_proba_rbf(self, x):
+        # TODO: WHAT NUMBER FOR KNERAL WIDTH?
+        kernel_width = 1.0
+        x = self.check_size(x)
+        mu = np.expand_dims(self.mu, 0)
+        exp_inner = -1 * \
+            (np.linalg.norm(mu - x, axis=-1) ** 2) / (2 * kernel_width ** 2)
+        K_mu_x = np.exp(exp_inner)
+        return K_mu_x
 
     def predict_proba(self, x):
         """
