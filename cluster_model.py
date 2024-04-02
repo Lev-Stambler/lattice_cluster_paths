@@ -277,7 +277,7 @@ def cluster_model_lattice(ds: npt.NDArray, gmms: List[MixtureModel]) -> List[Lis
 
     for i in range(len(gmms)):
         ds_mmep = np.memmap(
-            f'/tmp/mmat_{ds}_{i}.dat', dtype='float32', mode='w+', shape=ds.shape)
+            f'/tmp/mmat_ds_{i}.dat', dtype='float32', mode='w+', shape=ds.shape)
         ds_mmep[:] = ds[i]
         preds = np.nan_to_num(gmms[i].predict_proba_rbf(
             ds_mmep), nan=0.0).T
