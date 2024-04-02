@@ -281,7 +281,7 @@ def cluster_model_lattice(ds: npt.NDArray, gmms: List[MixtureModel]) -> List[Lis
             f'/tmp/mmat_ds_{i}.dat', dtype='float32', mode='w+', shape=ds[i].shape)
         ds_mmep[:] = ds[i]
         probs_for_all_layers[i, :] = gmms[i].predict_proba_rbf(
-            ds_mmep, mmep_name=f'/tmp/mmat_proba_sub_{i}.dat').T
+            ds_mmep, batch_size=8_092).T
             # ), nan=0.0).T
         print("Set predictions for layer", i)
     print("Set all probs with predictions")
