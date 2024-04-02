@@ -10,6 +10,7 @@ import numpy.typing as npt
 # Get the activations for the best dict features
 # TODO: fix up
 
+
 def top_k_dag_paths_dynamic(layers: List[List[List[float]]], k: int, top_layer: int = None):
     n_to_top_layer = len(layers[-1][0])
     layers = layers + [
@@ -21,7 +22,6 @@ def top_k_dag_paths_dynamic(layers: List[List[List[float]]], k: int, top_layer: 
     assert len(layers) > 1, "Need at least 2 layers"
     assert top_layer <= len(
         layers), "Top layer must be less than the number of layers"
-
 
     def recur(layer: int, node_layer_idx: int, memoizer):
         if (layer, node_layer_idx) in memoizer:
@@ -47,12 +47,14 @@ def top_k_dag_paths_dynamic(layers: List[List[List[float]]], k: int, top_layer: 
                 paths.append((new_path, new_val))
 
         seen = set()
-        deduped_list = [x for x in paths if not (str(x) in seen or seen.add(str(x)))]
+        deduped_list = [x for x in paths if not (
+            str(x) in seen or seen.add(str(x)))]
         deduped_list.sort(key=lambda x: x[1], reverse=True)
         cutoff = min(k, len(deduped_list))
         deduped_list = paths[:cutoff]
         # TODO: do we need to make a copy?
-        memoizer[(layer, node_layer_idx)] = deduped_list# [d for d in deduped_list]
+        # [d for d in deduped_list]
+        memoizer[(layer, node_layer_idx)] = deduped_list
         return deduped_list
 
     top_k = recur(top_layer, 0, {})
@@ -119,12 +121,12 @@ def calculate_matmul_n_times(n_components, mat_a, mat_b):
         mat_b:      torch.Tensor (1, k, d, d)
     """
     res = torch.zeros(mat_a.shape).to(mat_a.device)
-    
+
     for i in range(n_components):
         mat_a_i = mat_a[:, i, :, :].squeeze(-2)
         mat_b_i = mat_b[0, i, :, :].squeeze()
         res[:, i, :, :] = mat_a_i.mm(mat_b_i).unsqueeze(1)
-    
+
     return res
 
 
@@ -139,6 +141,7 @@ def calculate_matmul(mat_a, mat_b):
     assert mat_a.shape[-2] == 1 and mat_b.shape[-1] == 1
     return torch.sum(mat_a.squeeze(-2) * mat_b.squeeze(-1), dim=2, keepdim=True)
 
+
 def get_random_cutoff(t: str, size: int):
     if len(t) <= size:
         return t
@@ -146,5 +149,41 @@ def get_random_cutoff(t: str, size: int):
     end = start_r + size
     return t[start_r:end]
 
+
 def cosine_similarity_with_metric(a: npt.NDArray, b: npt.NDArray, metric: npt.NDArray):
-        return np.inner(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+    return np.inner(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+
+def pairwise_pearson_coefficient(A: npt.NDArray, B: npt.NDArray, eps=1e-8):
+    """
+    Compute the pairwise Pearson Correlation Coefficient between two matrices of features.
+
+    Correlation is computed *row wise*
+
+    From https://stackoverflow.com/questions/33650188/efficient-pairwise-correlation-for-two-matrices-of-features
+    """
+    assert A.shape[1] == B.shape[1], "Matrices must have the same number of features"
+    assert len(A.shape) == 2 and len(B.shape) == 2, "Matrices must be 2D"
+    A = A.T
+    B = B.T
+    mmap_A = np.memmap('/tmp/mmatA.dat', dtype='float32',
+                       mode='w+', shape=A.shape)
+    mmap_B = np.memmap('/tmp/mmatB.dat', dtype='float32',
+                       mode='w+', shape=B.shape)
+    mmap_A[:] = A[:]
+    mmap_B = B[:]
+    A = mmap_A
+    B = mmap_B
+
+    N = B.shape[0]
+    p1 = N*np.dot(B.T, A)
+    sA = A.sum(0)
+    sB = B.sum(0)
+    p2 = sA*sB[:, None]
+    p3 = N*((B**2).sum(0)) - (sB**2)
+    p4 = N*((A**2).sum(0)) - (sA**2)
+
+    # Finally compute Pearson Correlation Coefficient as 2D array
+    # print("DIVIDING BY", np.sqrt(p4*p3[:, None]))
+    pcorr = ((p1 - p2) / (np.sqrt(p4*p3[:, None]) + eps))
+    return pcorr

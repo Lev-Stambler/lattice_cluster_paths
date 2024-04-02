@@ -1,4 +1,5 @@
 import os
+from scipy.stats import pearsonr
 import pickle
 from datasets import Dataset, load_dataset
 from typing import List, Union, Dict
@@ -78,11 +79,11 @@ def score_for_gmm(gmm: MixtureModel, a: torch.Tensor):
     one_size = False
     if len(a.shape) == 1:
         one_size = True
-        a = a.unsqueeze(0)
+        a = np.expand_dims(a, 0)
     if one_size:
         # return gmm.predict_proba(a).detach().cpu().numpy()[0]
-        return gmm.dot_product(a).detach().cpu().numpy()[0] * -1
-    return gmm.dot_product(a).detach().cpu().numpy()
+        return gmm.predict_proba_rbf(a)[0]
+    return gmm.predict_proba_rbf(a)
     # return gmm.predict_proba(a).detach().cpu().numpy()
 
 
@@ -90,7 +91,7 @@ def score_for_neuron(self, to_score: List[str], primary_layer: int,
                      score_path: List[int],
                      top_n=100, primary_cutoff_mult_factor=3,
                      BS=128,
-                     embeds: Union[torch.Tensor, None] = None,
+                     embeds: Union[npt.NDArray, None] = None,
                      weighting_per_layer=None) -> List[int]:
     top_for_primary = top_n * primary_cutoff_mult_factor
     embeds, tokens_to_ds, _ = self._get_ds_metadata(
@@ -101,7 +102,7 @@ def score_for_neuron(self, to_score: List[str], primary_layer: int,
 
     for i in range(0, max_n_tokens, BS):
         top_idx = min(i + BS, max_n_tokens)
-        e = torch.tensor(embeds[:, i:top_idx])
+        e = embeds[:, i:top_idx]
         gmm_scores = score_for_gmm(
             self.gmms[primary_layer], e[primary_layer])
         to_add = zip(
@@ -249,7 +250,7 @@ def get_optimal_layer_gmm(dataset_np: npt.NDArray, layers: List[str], layer: str
     return gm
 
 
-def cluster_model_lattice(ds: npt.NDArray, gmms: List[MixtureModel], similarity_cutoff=float("-inf")) -> List[List[List[float]]]:
+def cluster_model_lattice(ds: npt.NDArray, gmms: List[MixtureModel]) -> List[List[List[float]]]:
     """
     We will take a bit of a short cut here. Rather than passing *representatives* from each centroid to find the "strength" on the following centroids,
     we will pass the *center* of each centroid to the next layer. This is a simplification, but it should be a good starting point and quite a bit faster.
@@ -262,51 +263,67 @@ def cluster_model_lattice(ds: npt.NDArray, gmms: List[MixtureModel], similarity_
         return pickle.load(open(save_name, 'rb'))
 
     print("Getting cluster scores for lattice")
-    # We want to have the outer index be the token, the inner index be the layer
-    ds = ds.swapaxes(0, 1)
 
-    def score_cluster_to_next(curr_layer_idx: int, next_layer_idx: int, metric_cutoff: float = None) -> List[float]:
-        """
-        Score the cluster to the next clusters.
-        Set any score to 0 if the distance between the two centroids is greater than the distance_cutoff
+    probs_for_all_layers = [
+        np.zeros((gmms[layer].n_components, ds.shape[1]), dtype=float)
+        for layer in range(ds.shape[0])]
 
-        # TODO: DIFFERENT METRICS???
-        # TODO: USING INNER PRODUCT RN
-        """
-        print("Getting scores for layers", curr_layer_idx, "to", next_layer_idx)
-        # HIGH_WEIGHT_PROB = 0.5
+    for i in range(len(gmms)):
+        preds = np.nan_to_num(gmms[i].predict_proba_rbf(
+            
+            ds[i]), nan=0.0).T
+        probs_for_all_layers[i] = preds
 
-        to_next_layer_sim = np.zeros(
-            (gmms[curr_layer_idx].n_components, gmms[next_layer_idx].n_components), dtype=float)
+    def score_cluster_to_next(curr_layer_idx: int, next_layer_idx: int) -> List[float]:
+        coeffs = utils.pairwise_pearson_coefficient(
+            probs_for_all_layers[curr_layer_idx], probs_for_all_layers[next_layer_idx])
+        print("COEFF STUFF", probs_for_all_layers[curr_layer_idx].max(), probs_for_all_layers[curr_layer_idx].min(),
+               coeffs.shape, coeffs.min(), coeffs.max())
+        return coeffs
 
-        # TODO: BATCHING is a good idea and not working right now
-        # I think that I am missing a step here
-        BS = 128
-        for tok_idx in range(0, ds.shape[0], BS):
-            tok = ds[tok_idx:min(tok_idx + BS, len(ds))]
-            pred_curr = np.nan_to_num(gmms[curr_layer_idx].predict_proba_rbf(
-                tok[:, curr_layer_idx]), nan=0.0)
-            pred_next = np.nan_to_num(gmms[next_layer_idx].predict_proba_rbf(
-                tok[:, next_layer_idx]), nan=0.0)
+    # def score_cluster_to_next(curr_layer_idx: int, next_layer_idx: int, metric_cutoff: float = None) -> List[float]:
+    #     """
+    #     Score the cluster to the next clusters.
+    #     Set any score to 0 if the distance between the two centroids is greater than the distance_cutoff
 
+    #     TODO: notes
+    #     We actually want to model **correlation** between the clusters. We can just use the Pearson correlation coefficient for this! (https://en.wikipedia.org/wiki/Pearson_correlation_coefficient)
 
-            batch_size = pred_curr.shape[0]
-            # TODO: does this give us correlation??
-            # TODO: prob way to use batching here
-            # indexing_matrix =
-            # TODO: batch
-            for i in range(batch_size):
-                corrs = np.outer(pred_curr[i], pred_next[i])
-                # Set the corresponding correlations to the matrix
-                print("Adding corrs", corrs)
-                to_next_layer_sim += corrs
+    #     """
+    #     print("Getting scores for layers", curr_layer_idx, "to", next_layer_idx)
+    #     # HIGH_WEIGHT_PROB = 0.5
 
-        return to_next_layer_sim
+    #     to_next_layer_sim = np.zeros(
+    #         (gmms[curr_layer_idx].n_components, gmms[next_layer_idx].n_components), dtype=float)
+
+    #     # I think that I am missing a step here
+    #     BS = 128
+
+    #     for tok_idx in range(0, ds.shape[0], BS):
+    #         toks = ds[tok_idx:min(tok_idx + BS, len(ds))]
+
+    #         pred_curr = np.nan_to_num(gmms[curr_layer_idx].predict_proba_rbf(
+    #             toks[:, curr_layer_idx]), nan=0.0)
+    #         pred_next = np.nan_to_num(gmms[next_layer_idx].predict_proba_rbf(
+    #             toks[:, next_layer_idx]), nan=0.0)
+
+    #         # Alternately
+
+    #         batch_size = pred_curr.shape[0]
+    #         # If the predictions match up, we will add the correlation to the matrix
+    #         # TODO: WE ARE USING THE RBF KERNEL HERE... is that okay??
+    #         for i in range(batch_size):
+    #             corrs = np.outer(pred_curr[i], pred_next[i])
+    #             # Set the corresponding correlations to the matrix
+    #             print("Adding corrs", corrs)
+    #             to_next_layer_sim += corrs
+
+    #     return to_next_layer_sim
 
     cluster_scores = []
     for layer in range(len(gmms) - 1):
         scores_to_next = score_cluster_to_next(
-            layer, layer + 1, similarity_cutoff)
+            layer, layer + 1)
         # TODO: into sparse matrix and then list??
         cluster_scores.append(scores_to_next)
 
@@ -415,7 +432,8 @@ def score_tokens_for_path(embd_dataset: npt.NDArray,
     for i in range(0, token_per_layer.shape[0], BS):
         top_idx = min(i + BS, token_per_layer.shape[0])
         for layer in range(len(path)):
-            local_scores = gmms[layer].predict_proba_rbf(token_per_layer[i:top_idx, layer])
+            local_scores = gmms[layer].predict_proba_rbf(
+                token_per_layer[i:top_idx, layer])
             local_scores = local_scores[:, path[layer]]
             scores[i:top_idx] += local_scores * \
                 score_weighting_per_layer[layer]
@@ -477,7 +495,7 @@ class Decomposer:
     gmms: List[MixtureModel]
     lattice_scores: List[List[List[float]]]
 
-    def __init__(self, model_lens, dataset: Dataset, layers: List[str], similarity_cutoff=19):
+    def __init__(self, model_lens, dataset: Dataset, layers: List[str]):
         torch.manual_seed(SEED)
         np.random.seed(SEED)
         print(f"Creating decomposer with parameter hash {create_param_tag()}")
@@ -487,7 +505,6 @@ class Decomposer:
         self.dataset = [utils.get_random_cutoff(
             d, STRING_SIZE_CUTOFF) for d in dataset]
         self.layers = layers
-        self.similarity_cutoff = similarity_cutoff
         self.gmms = []
         self.lattice_scores = None
         self.labs = [get_block_out_label(i) for i in range(N_BLOCKS)]
@@ -499,7 +516,7 @@ class Decomposer:
             self.gmms.append(get_optimal_layer_gmm(
                 self.ds_emb, self.layers, self.layers[i]))
         self.lattice_scores = cluster_model_lattice(
-            self.ds_emb, self.gmms, self.similarity_cutoff)
+            self.ds_emb, self.gmms)
 
     def _get_ds_metadata(self, ds: List[str], embeds: npt.NDArray = None):
         if embeds is None:
@@ -581,7 +598,7 @@ def main():
             ds_emb, labs, get_block_out_label(i))
         gmms.append(gmm)
 
-    lattice = cluster_model_lattice(model, ds_emb, gmms, similarity_cutoff=19)
+    lattice = cluster_model_lattice(ds_emb, gmms, similarity_cutoff=19)
     # max_flow = find_max_weight(lattice)
 
     token_to_original_ds = []
