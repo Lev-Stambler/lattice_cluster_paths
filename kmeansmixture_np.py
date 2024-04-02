@@ -90,11 +90,12 @@ class KMeansMixture():
             print("SUBED SHAPE", subed_shape)
             subed = np.memmap(mmep_name, dtype='float32',
                               mode='w+', shape=subed_shape)
-            BS = 1_024
+            BS = 8_192
             # TODO: VARIABLE BS
             for i in range(0, x.shape[0], BS):
                 top = min(i + BS, x.shape[0])
                 subed[i:top] = np.subtract(mu, x[i:top])
+                print("ON", i)
             # subed[:] = np.subtract(mu, x)
         else:
             subed = np.subtract(mu, x)
