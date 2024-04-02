@@ -265,14 +265,16 @@ def cluster_model_lattice(ds: npt.NDArray, gmms: List[MixtureModel]) -> List[Lis
     print("Getting cluster scores for lattice")
 
     probs_for_all_layers = [
-        np.zeros((gmms[layer].n_components, ds.shape[1]), dtype=float)
-        for layer in range(ds.shape[0])]
+        np.memmap('/tmp/mmatA.dat', dtype='float32',
+                       mode='w+', shape=(gmms[layer].n_components, ds.shape[1]))
+                for layer in range(ds.shape[0])]
+    for l in probs_for_all_layers:
+        l[:] = 0.0
 
     for i in range(len(gmms)):
         preds = np.nan_to_num(gmms[i].predict_proba_rbf(
-            
             ds[i]), nan=0.0).T
-        probs_for_all_layers[i] = preds
+        probs_for_all_layers[i, :] = preds
 
     def score_cluster_to_next(curr_layer_idx: int, next_layer_idx: int) -> List[float]:
         coeffs = utils.pairwise_pearson_coefficient(
@@ -598,7 +600,7 @@ def main():
             ds_emb, labs, get_block_out_label(i))
         gmms.append(gmm)
 
-    lattice = cluster_model_lattice(ds_emb, gmms, similarity_cutoff=19)
+    lattice = cluster_model_lattice(ds_emb, gmms)
     # max_flow = find_max_weight(lattice)
 
     token_to_original_ds = []
