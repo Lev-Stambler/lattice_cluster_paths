@@ -275,13 +275,16 @@ def cluster_model_lattice(ds: npt.NDArray, gmms: List[MixtureModel]) -> List[Lis
         l[:] = 0.0
     print("Set all initial to 0")
 
+	# TODO: we might want to batch this...
     for i in range(len(gmms)):
         ds_mmep = np.memmap(
             f'/tmp/mmat_ds_{i}.dat', dtype='float32', mode='w+', shape=ds[i].shape)
         ds_mmep[:] = ds[i]
         preds = np.nan_to_num(gmms[i].predict_proba_rbf(
             ds_mmep, mmep_name=f'/tmp/mmat_proba_sub_{i}.dat'), nan=0.0).T
+        print("Got preds")
         probs_for_all_layers[i, :] = preds
+        print("Set predictions for layer", i)
     print("Set all probs with predictions")
 
     def score_cluster_to_next(curr_layer_idx: int, next_layer_idx: int) -> List[float]:
