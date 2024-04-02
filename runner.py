@@ -15,24 +15,24 @@ ds = shuffled
 labs = [get_block_out_label(i) for i in range(N_BLOCKS)]
 
 
-# In[8]:
+# In[2]:
 
 
 import importlib
 importlib.reload(cluster_model)
 
 # TODO: auto sim cutoff needed
-decomp = cluster_model.Decomposer(model, ds, labs, similarity_cutoff=2)
+decomp = cluster_model.Decomposer(model, ds, labs)
 decomp.load()
 
 
-# In[9]:
+# In[3]:
 
 
 decomp.lattice_scores[0].shape
 
 
-# In[10]:
+# In[4]:
 
 
 from typing import List
@@ -58,19 +58,26 @@ modified_lattice = cutoff_lattice(decomp.lattice_scores, related_cutoff=15)
 # utils.top_k_dag_paths_dynamic(modified_lattice, k=10_000)
 
 
+# In[5]:
+
+
+[d.min() for d in decomp.lattice_scores]
+[d.max() for d in decomp.lattice_scores]
+
+
 # ## Isolate Specific Neurons
 
-# In[11]:
+# In[6]:
 
 
 avoid_set = {
-	0: [11],
-	1: [159],
-	2: [1],
+	# 0: [11],
+	# 1: [159],
+	# 2: [1],
 }
 
 
-# In[13]:
+# In[7]:
 
 
 import os
@@ -91,37 +98,74 @@ len(ret)
 
 # ## Try different scoring method
 
-# In[16]:
+# In[28]:
 
 
-# importlib.reload(cluster_model)
+importlib.reload(cluster_model)
 
-# score_path = [14, 10, 14, 18, 15, 13]
-# # TODO: embeds to here...
-# to_score = ds
-# importlib.reload(cluster_model)
-# _, top_ds, scores = cluster_model.score_for_neuron(decomp, to_score[:200], LAYER, score_path, top_n=20, weighting_per_layer=[0, 1, 1, 1, 1, 1])
+score_path = [14, 10, 14, 18, 15, 13]
+# TODO: embeds to here...
+to_score = ds
+importlib.reload(cluster_model)
+_, top_ds, scores = cluster_model.score_for_neuron(decomp, to_score[:200], LAYER, score_path, top_n=20, weighting_per_layer=[0, 1, 1, 1, 1, 1])
+
+
+# In[29]:
+
+
+import numpy as np
+# def get_renderable_scores(scored_t: List[str], scores: List
+
+
+scores_per_token_set = np.array([max(s) for s in scores])
+top_args = np.argsort(scores_per_token_set)[::-1]
+
+# scores_per_token_set = [max(s) for s in scores]
+# top_args = [s.argmax() for s in scores]
+
+to_score_top = [to_score[i] for i in top_ds]
+
+tokens = [[model.tokenizer.decode(t) for t in model.tokenizer(d)[
+    'input_ids']] for d in to_score_top]
+tokens_reord = [tokens[i] for i in top_args]
+scores_reord = [scores[i] for i in top_args]
+
+# TODO: WHAT IS HAPPENING WITH NAN?
+act_simp = [[[[math.exp(tok)]]
+             for tok in s] for s in scores_reord]
+# TODO sep fun
+html = render(
+    "TextNeuronActivations",
+    tokens=tokens_reord,
+    activations=act_simp,
+    firstDimensionName="Layer",
+    secondDimensionName="Neuron",
+    firstDimensionLabels=None,
+    secondDimensionLabels=None
+)
+display(HTML(str(html)))
 
 
 # ## Try more path like method
 
-# In[19]:
+# In[22]:
 
 
+# TODO: SIOMETHING WRONG HERE WITH THE PATHS
 import numpy as np
 importlib.reload(cluster_model)
-score_path = [14, 10, 14, 18, 15, 13]
+score_path = [3, 10, 11, 9, 19, 14]
 
 """
-Paths which seem to have meaning
-
+Paths which seem to have meaning:
 
 """
 
 weighting_per_layer = np.ones(len(decomp.lattice_scores) + 1)
 # TODO: do we need to weight the layers?
-weighting_per_layer[LAYER] = 2.0
 
+# TODO: BY NEURON WEIGHTING!
+weighting_per_layer[LAYER] = 2
 
 to_score = [d[:300] for d in ds][:200]
 scores = decomp.score(
@@ -134,19 +178,15 @@ scores = decomp.score(
 scores_per_token_set = np.array([max(s) for s in scores])
 top_args = np.argsort(scores_per_token_set)[::-1]
 
+# TODO: we have the weights here
+
 tokens = [[model.tokenizer.decode(t) for t in model.tokenizer(d)[
     'input_ids']] for d in to_score]
 tokens_reord = [tokens[i] for i in top_args]
 scores_reord = [scores[i] for i in top_args]
 
 
-# In[ ]:
-
-
-min([min(s) for s in scores]), max([max(s) for s in scores])
-
-
-# In[20]:
+# In[25]:
 
 
 import math
@@ -173,7 +213,7 @@ html = render(
 display(HTML(str(html)))
 
 
-# In[ ]:
+# In[26]:
 
 
 # to_score_simp = ["Solve x + 5 = m * 33 + 4 *n"]
