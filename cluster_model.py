@@ -42,7 +42,7 @@ else:
     N_CLUSTERS_MIN = N_DIMS
     N_CLUSTERS_MAX = N_DIMS + 1
     N_BLOCKS = 6
-    STRING_SIZE_CUTOFF = 2_000
+    STRING_SIZE_CUTOFF = 1_200
 
 
 def metadata_json():
