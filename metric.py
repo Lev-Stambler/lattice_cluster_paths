@@ -26,6 +26,7 @@ def _exp_cos_kernel(x, features, kernel_width):
     inner_p = (features @ np.swapaxes(x, -1, -2)).squeeze(axis=-1)
     cos_inner_prod = inner_p / \
         (np.linalg.norm(x, axis=-1) * np.linalg.norm(features, axis=-1))
+    # print("COS INNER PRODUCT", cos_inner_prod)
     # cos_inner_prod = cosine_similarity(x, features)
     exp = np.exp(cos_inner_prod / kernel_width)
     normed = exp / np.sum(exp, axis=-1, keepdims=True)
@@ -34,7 +35,7 @@ def _exp_cos_kernel(x, features, kernel_width):
     return ret
 
 
-def predict_proba(x: npt.NDArray, batch_size=-1, kernel_width=0.05):
+def predict_proba(x: npt.NDArray, batch_size=-1, kernel_width=0.01):
     x = _check_size(x)
     n_dims = x.shape[-1]
     features = np.eye(n_dims)
