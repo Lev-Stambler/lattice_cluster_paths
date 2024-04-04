@@ -257,7 +257,7 @@ def top_k_dag_paths(layers: List[np.ndarray], layer: int, neuron: int, k: int):
         path_no_sink_no_source = path[1:-1]
         # print(path_no_sink, path)
         #  TODO: CANNOT GO BACKWARDS
-        print(path, path_no_sink_no_source)
+        # print(path, path_no_sink_no_source)
         path_node_idx = [graph_layers_to_idx[i][node]
                          for i, node in enumerate(path_no_sink_no_source)]
         assert len(path_node_idx) == len(layers) + 1
@@ -267,7 +267,7 @@ def top_k_dag_paths(layers: List[np.ndarray], layer: int, neuron: int, k: int):
         total_weight_no_sink = total_weight - 1
         recovered_weight = -1 * (total_weight_no_sink / GRAPH_SCALING_RESOLUTION - most_pos * len(path_no_sink_no_source))
         paths.append((path_node_idx, recovered_weight))
-        # print(paths[-1])
+        print(paths[-1])
         if counter == k-1:
             break
     return paths
