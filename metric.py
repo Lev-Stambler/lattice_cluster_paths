@@ -1,6 +1,7 @@
 import numpy.typing as npt
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
+from scipy.stats import ortho_group
 
 def _check_size(x):
     if len(x.shape) == 2:
@@ -33,10 +34,11 @@ def _exp_cos_kernel(x, features, kernel_width):
     return ret
 
 
-def predict_proba(x: npt.NDArray, batch_size=-1, kernel_width=1.0):
+def predict_proba(x: npt.NDArray, batch_size=-1, kernel_width=0.05):
     x = _check_size(x)
     n_dims = x.shape[-1]
     features = np.eye(n_dims)
+    # features = ortho_group.rvs(n_dims) # TODO: WE NEED TO SAVE THIS IF WE USE THIS
     features = np.expand_dims(features, axis=0)
     assert x.shape[2] == features.shape[2]
 
@@ -47,4 +49,4 @@ def predict_proba(x: npt.NDArray, batch_size=-1, kernel_width=1.0):
             out[i:top] = _exp_cos_kernel(
                 x[i:top], features, kernel_width=kernel_width)
         return out
-    _exp_cos_kernel(x, features, kernel_width=kernel_width)
+    return _exp_cos_kernel(x, features, kernel_width=kernel_width)

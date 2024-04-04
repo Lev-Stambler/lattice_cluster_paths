@@ -1,5 +1,4 @@
 import os
-from scipy.stats import pearsonr
 import pickle
 from datasets import Dataset, load_dataset
 from typing import List, Union, Dict
@@ -222,7 +221,7 @@ def cutoff_lattice(lattice: List[List[List[float]]], related_cutoff=1):
     print(r[0].sum())
     return r
 
-def score_tokens_for_path(embd_dataset: npt.NDArray,
+def log_score_tokens_for_path(embd_dataset: npt.NDArray,
                           path: List[int],
                           score_weighting_per_layer: npt.NDArray, BS=128):
     """
@@ -316,7 +315,7 @@ class Decomposer:
                                 BS=BS,
                                 embeds=embeds, weighting_per_layer=weighting_per_layer)
 
-    def score(self, to_score: List[str], score_path: List[int], embeds: Union[npt.NDArray, None] = None, weighting_per_layer=None, BS=128) -> List[List[float]]:
+    def score(self, to_score: List[str], score_path: List[int], embeds: Union[npt.NDArray, None] = None, weighting_per_layer=None, BS=128, use_log_scores=True) -> List[List[float]]:
         """
         Get the scores for the tokens in the dataset
         """
@@ -326,20 +325,23 @@ class Decomposer:
         embeds, token_to_original_ds, _ = self._get_ds_metadata(
             to_score, embeds)
         print("GOT EMBEDS", embeds.shape)
-        scores = score_tokens_for_path(
+        log_scores = log_score_tokens_for_path(
             embd_dataset=embeds, path=score_path,
             score_weighting_per_layer=weighting_per_layer, BS=BS)
         item_to_scores = {}
-        for i in range(len(scores)):
+        # return log_scores
+        # TODO: BATCHING!
+        for i in range(len(log_scores)):
             item = token_to_original_ds[i]
             if item not in item_to_scores:
                 item_to_scores[item] = []
-            item_to_scores[item].append(scores[i])
+            item_to_scores[item].append(log_scores[i])
         # Assuming that the scores are "dense" in how they were added, we have a list
         ks = sorted(list(item_to_scores.keys()))
         final_scores = []
         for k in ks:
             s = item_to_scores[k]
+            if not use_log_scores:
+                s = np.exp(s)
             final_scores.append(s)
-
         return final_scores
