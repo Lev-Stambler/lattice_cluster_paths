@@ -93,11 +93,15 @@ class KMeansMixture():
         exp_inner = -1 * \
             (np.linalg.norm(subed, axis=-1) ** 2) / (2 * kernel_width ** 2)
         K_mu_x = np.exp(exp_inner)
-        return K_mu_x
+        # TODO: SHOULD WE NORM???
+        K_mu_x_normed = K_mu_x / np.sum(K_mu_x, axis=-1, keepdims=True)
+        return np.nan_to_num(K_mu_x_normed, nan=0.0)
 
     def predict_proba_rbf(self, x, batch_size=-1):
         # TODO: WHAT NUMBER FOR KNERAL WIDTH?
-        kernel_width = 1.0
+        # TODO: WE ARE NORMALIZING THE KERNELS
+        # TODO: WHAT SHOULD KERNEL WIDTH BE?
+        kernel_width = 0.5
         x = self.check_size(x)
         mu = np.expand_dims(self.mu, 0)
         assert x.shape[2] == mu.shape[2]
