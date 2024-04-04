@@ -149,15 +149,12 @@ def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, datas
     #     return pickle.load(open(f_name, 'rb'))
     # TODO: more efficient way with tokenization first?
     all_finished = get_and_prepare_save_tag('all_finished_embd')
-    all_saved = True
     # TODO: check more than just this. Check shapes? Or maybe metadata tag saying everything saved/ finished
     def mmat_file(layer: str):
         return f'metadata/{create_param_tag()}/mmat_t_layer_total_{layer}.dat'
-    for l in layers:
-        if not os.path.exists(mmat_file(l)):
-            all_saved = False
-    if use_save and all_saved and os.path.exists(all_finished):
-        return [np.memmap(mmat_file(l), dtype='float32', mode='r') for l in layers]
+    if use_save and os.path.exists(all_finished):
+        print("Loading dataset from cache")
+        return [np.memmap(mmat_file(i), dtype='float32', mode='r') for i, _ in enumerate(layers)]
 
     all_outs = [[] for _ in layers]
     with torch.no_grad():
@@ -251,9 +248,11 @@ def cluster_model_lattice(ds: List[npt.NDArray]) -> List[List[List[float]]]:
     for i in range(N_BLOCKS):
         ds_mmep = np.memmap(
             f'/tmp/mmat_ds_{i}.dat', dtype='float32', mode='w+', shape=ds[i].shape)
+        print("Trying to set dataset for layer", i)
         ds_mmep[:] = ds[i]
+        print("Set dataset for layer", i, "Getting proba")
         probs_for_all_layers[i][:] = metric.predict_proba(
-            ds_mmep, batch_size=8_092).T
+            ds_mmep, batch_size=128).T
         print("Set predictions for layer", i)
     print("Set all probs with predictions")
 
