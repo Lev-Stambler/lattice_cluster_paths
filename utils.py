@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Dict, Tuple
 import torch
 import numpy as np
 from einops import rearrange
@@ -9,6 +9,7 @@ import numpy.typing as npt
 
 # Get the activations for the best dict features
 # TODO: fix up
+GRAPH_SCALING_RESOLUTION = 100_000
 
 
 def top_k_dag_paths_dynamic(layers: List[List[List[float]]], k: int, top_layer: int = None):
@@ -187,3 +188,79 @@ def pairwise_pearson_coefficient(A: npt.NDArray, B: npt.NDArray, eps=1e-8):
     # print("DIVIDING BY", np.sqrt(p4*p3[:, None]))
     pcorr = ((p1 - p2) / (np.sqrt(p4*p3[:, None]) + eps))
     return pcorr
+
+
+def to_nx_graph(cluster_scores: List[npt.NDArray]) -> Tuple[nx.DiGraph, int, List[Dict[int, int]], List[Dict[int, int]]]:
+    node_idx = 0
+    # We need to account for all outgoing from the end
+    n_clusters = sum([len(cs) for cs in cluster_scores]) + \
+        len(cluster_scores[-1][0])
+    # eps = 1e-6
+    most_pos = (max([cs.max() for cs in cluster_scores]))  # + eps
+
+    print(f"We have {n_clusters} clusters")
+
+    G = nx.DiGraph()
+    last_layer_start_idx = -1
+    graph_idx_to_node_idx = [{}]
+    node_idx_to_graph_idx = [{}]
+    for layer in range(len(cluster_scores)):
+        # Append the next layer
+        graph_idx_to_node_idx.append({})
+        node_idx_to_graph_idx.append({})
+        layer_start_idx = node_idx
+        n_in_layer = len(cluster_scores[layer])
+        if layer == len(cluster_scores) - 1:
+            last_layer_start_idx = layer_start_idx + n_in_layer - 1
+        for i, node_cs in enumerate(cluster_scores[layer]):
+            graph_idx_to_node_idx[layer][node_idx] = i
+            node_idx_to_graph_idx[layer][i] = node_idx
+            for j, c in enumerate(node_cs):
+                next_idx = layer_start_idx + n_in_layer + j
+
+                # We need all the weights to be positive but the shortest paths to be the most important
+                w = round((-1 * c + most_pos)
+                          * GRAPH_SCALING_RESOLUTION)
+                assert w >= 0, f"Weight is negative: {w}"
+                # print("AAA", w, node_idx, next_idx)
+                graph_idx_to_node_idx[layer + 1][next_idx] = j
+                node_idx_to_graph_idx[layer + 1][j] = next_idx
+                G.add_edge(node_idx, next_idx, weight=w)
+            node_idx += 1
+
+    sink = n_clusters
+
+    for i in range(len(cluster_scores[-1][0])):
+        G.add_edge(node_idx_to_graph_idx[-1][i], sink, weight=1)
+    # for i in range(len(cluster_scores[-1])):
+    #     G.add_edge(last_layer_start_idx + i, sink, weight=1)
+
+    # nx.draw(G, with_labels=True, pos=nx.nx_pydot.graphviz_layout(G, prog='dot'))
+    # plt.savefig("graph.png")
+    return G, sink, graph_idx_to_node_idx, node_idx_to_graph_idx, most_pos
+
+
+def top_k_dag_paths(layers: List[np.ndarray], layer: int, neuron: int, k: int):
+    graph, sink, graph_layers_to_idx, node_layers_to_graph, most_pos = to_nx_graph(
+        layers)
+    source = node_layers_to_graph[layer][neuron]
+    X = nx.shortest_simple_paths(graph, source, sink, weight='weight')
+    # print(len(node_layers_to_graph))
+
+    paths = []
+    for counter, path in enumerate(X):
+        path_no_sink = path[:-1]
+        # print(path_no_sink, path)
+        #  TODO: CANNOT GO BACKWARDS
+        path_node_idx = [graph_layers_to_idx[i + layer][node]
+                         for i, node in enumerate(path_no_sink)]
+        total_weight = sum([graph[path[i]][path[i + 1]]['weight']
+                            for i in range(len(path) - 1)])
+        # print(total_weight, most_pos)
+        total_weight_no_sink = total_weight - 1
+        recovered_weight = -1 * (total_weight_no_sink / GRAPH_SCALING_RESOLUTION - most_pos * len(path_no_sink))
+        paths.append((path_node_idx, recovered_weight))
+        print(paths[-1])
+        if counter == k-1:
+            break
+    return paths
