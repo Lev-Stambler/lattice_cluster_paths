@@ -210,19 +210,18 @@ def to_nx_graph(cluster_scores: List[npt.NDArray]) -> Tuple[nx.DiGraph, int, Lis
         node_idx_to_graph_idx.append({})
         layer_start_idx = node_idx
         n_in_layer = len(cluster_scores[layer])
-        if layer == len(cluster_scores) - 1:
-            last_layer_start_idx = layer_start_idx + n_in_layer - 1
         for i, node_cs in enumerate(cluster_scores[layer]):
             graph_idx_to_node_idx[layer][node_idx] = i
             node_idx_to_graph_idx[layer][i] = node_idx
             for j, c in enumerate(node_cs):
                 next_idx = layer_start_idx + n_in_layer + j
 
+                    
                 # We need all the weights to be positive but the shortest paths to be the most important
                 w = round((-1 * c + most_pos)
                           * GRAPH_SCALING_RESOLUTION)
                 assert w >= 0, f"Weight is negative: {w}"
-                # print("AAA", w, node_idx, next_idx)
+
                 graph_idx_to_node_idx[layer + 1][next_idx] = j
                 node_idx_to_graph_idx[layer + 1][j] = next_idx
                 G.add_edge(node_idx, next_idx, weight=w)
