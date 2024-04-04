@@ -35,13 +35,13 @@ if DEBUG:
     N_BLOCKS = 6
     STRING_SIZE_CUTOFF = 200
 else:
-    N_DATASIZE = 800
+    N_DATASIZE = 3_000
     # N_CLUSTERS_MIN = int(0.5 * N_DIMS)
     # N_CLUSTERS_MAX = 10 * N_DIMS
     N_CLUSTERS_MIN = N_DIMS
     N_CLUSTERS_MAX = N_DIMS + 1
     N_BLOCKS = 6
-    STRING_SIZE_CUTOFF = 700
+    STRING_SIZE_CUTOFF = -1
 
 
 def metadata_json():
@@ -142,23 +142,59 @@ def forward_pass(model_lens: transformer_lens.HookedTransformer, t: str, layer: 
 
 # TODO: we should have better labeling!!
 
-def get_per_layer_emb_dataset(model_lens: transformer_lens.HookedTransformer, dataset: Dataset, layers: List[str], use_save=True) -> List[npt.NDArray]:
-    layers_out = []
-    for layer in layers:
-        ds_name = get_and_prepare_save_tag(f'{layer}_dataset_embd')
+def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, dataset: Dataset, layers: List[str], use_save=True) -> npt.NDArray:
+    f_name = get_and_prepare_save_tag('dataset_embd')
+    if os.path.exists(f_name) and use_save:
+        return pickle.load(open(f_name, 'rb'))
+    # TODO: more efficient way with tokenization first?
+    all_outs = [[] for _ in layers]
+    with torch.no_grad():
+        BS = 16
+        for t in range(0, len(dataset), BS):
+            top_idx = min(t + BS, len(dataset))
+            d = dataset[t:top_idx]
+            outs = model_lens.run_with_cache(d)[1]
+            for i, l in enumerate(layers):
+                all_outs[i] += list(outs[l].cpu().numpy().reshape(-1, N_DIMS))
+            # all_outs += out
+    outs_np = [
+    ]
+    for l, _ in enumerate(layers):
+        total_n_toks = len(all_outs[l])
+        out_np = np.memmap(f'/tmp/mmat_t_layer_total_{l}.dat', dtype='float32',
+                           mode='w+', shape=(total_n_toks, N_DIMS))
+        BS = 1_024 * 8
+        for i in range(0, total_n_toks, BS):
+            top_idx = min(i + BS, total_n_toks)
+            # print("ON", i, top_idx, all_outs[l][i:top_idx])
+            out_np[i:top_idx, :] = np.array(all_outs[l][i:top_idx])
+        outs_np.append(out_np)
+    if use_save:
+        pickle.dump(outs_np, open(f_name, 'wb'))
+    return outs_np
 
-        # TODO: DOES THIS WORK?
-        if os.path.exists(ds_name) and use_save:
-            print("Loading dataset from cache")
-            dataset_np = pickle.load(open(ds_name, 'rb'))
-        else:
-            # TODO: think about this in terms of flattening the dataset
-            dataset_np_non_flat = [list(forward_pass(model_lens, t, layer).squeeze(
-                0).detach().cpu().numpy()) for t in dataset]
-            dataset_np = [d for ds in dataset_np_non_flat for d in ds]
-            pickle.dump(dataset_np, open(ds_name, 'wb'))
-        layers_out.append(dataset_np)
-    return np.stack(layers_out, axis=0)
+
+# def get_per_layer_emb_dataset(model_lens: transformer_lens.HookedTransformer, dataset: Dataset, layers: List[str], use_save=True) -> List[npt.NDArray]:
+#     layers_out = []
+#     for layer in layers:
+#         ds_name = get_and_prepare_save_tag(f'{layer}_dataset_embd')
+
+#         # TODO: DOES THIS WORK?
+#         if os.path.exists(ds_name) and use_save:
+#             print("Loading dataset from cache")
+#             dataset_np = pickle.load(open(ds_name, 'rb'))
+#         else:
+#             # TODO: think about this in terms of flattening the dataset
+#             print("Getting dataset for layer", layer)
+#             dataset_np_non_flat = [np.array(forward_pass(model_lens, t, layer).squeeze(
+#                 0).detach().cpu().numpy()) for t in dataset]
+#             # Flatten
+#             print(dataset_np_non_flat[0].shape)
+#             dataset_np = np.array([d for ds in dataset_np_non_flat for d in ds])
+#             print("Saving dataset to cache")
+#             pickle.dump(dataset_np, open(ds_name, 'wb'))
+#         layers_out.append(dataset_np)
+#     return np.stack(layers_out, axis=0)
 
 
 def cluster_model_lattice(ds: List[npt.NDArray]) -> List[List[List[float]]]:
@@ -179,8 +215,8 @@ def cluster_model_lattice(ds: List[npt.NDArray]) -> List[List[List[float]]]:
     # TODO: parameterize by N_DIMS
     probs_for_all_layers = [
         np.memmap(f'/tmp/mmat_prob_layer_{layer}.dat', dtype='float32',
-                  mode='w+', shape=(N_DIMS, ds.shape[1]))
-        for layer in range(ds.shape[0])]
+                  mode='w+', shape=(N_DIMS, ds[layer].shape[0]))
+        for layer in range(len(ds))]
     for l in probs_for_all_layers:
         l[:] = 0.0
     print("Set all initial to 0")
@@ -271,13 +307,18 @@ class Decomposer:
         self.model_lens = model_lens
         # TODO: cutoff in random position
 
-        self.dataset = [utils.get_random_cutoff(
-            d, STRING_SIZE_CUTOFF) for d in dataset]
+        if STRING_SIZE_CUTOFF > 0:
+            self.dataset = [utils.get_random_cutoff(
+                d, STRING_SIZE_CUTOFF) for d in dataset]
+        else:
+            self.dataset = dataset
+        print("Created dataset")
         self.layers = layers
         self.lattice_scores = None
         self.labs = [get_block_out_label(i) for i in range(N_BLOCKS)]
-        self.ds_emb = get_per_layer_emb_dataset(
+        self.ds_emb = get_layers_emb_dataset(
             self.model_lens, self.dataset, self.labs)
+        print("Got embeddings")
 
     def load(self):
         self.lattice_scores = cluster_model_lattice(
@@ -285,7 +326,7 @@ class Decomposer:
 
     def _get_ds_metadata(self, ds: List[str], embeds: npt.NDArray = None):
         if embeds is None:
-            embeds = get_per_layer_emb_dataset(
+            embeds = get_layers_emb_dataset(
                 self.model_lens, ds, self.layers, use_save=False)
         token_to_original_ds = []
         token_to_pos_original_ds = []
