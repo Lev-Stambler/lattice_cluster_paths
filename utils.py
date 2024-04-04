@@ -241,7 +241,7 @@ def restrict_to_related_vertex(lattice: List[npt.NDArray], layer: int, idx: int)
     above = [] if layer >= len(lattice) - 1 else lattice[layer+1:]
     curr = [] if layer == len(lattice) else [lattice[layer][idx:idx+1]]
     # print(bellow[0].shape, prior[0].shape, 
-    print(bellow[0].shape, prior[0].shape, curr[0].shape, above[0].shape, len(above))
+    # print(bellow[0].shape, prior[0].shape, curr[0].shape, above[0].shape, len(above))
     return bellow + prior + curr + above
 
 def top_k_dag_paths(layers: List[np.ndarray], layer: int, neuron: int, k: int):
