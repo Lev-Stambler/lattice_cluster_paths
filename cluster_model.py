@@ -149,13 +149,16 @@ def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, datas
     # TODO: more efficient way with tokenization first?
     all_outs = [[] for _ in layers]
     with torch.no_grad():
-        BS = 16
+        BS = 4
         for t in range(0, len(dataset), BS):
             top_idx = min(t + BS, len(dataset))
             d = dataset[t:top_idx]
+            torch.cuda.empty_cache()
             outs = model_lens.run_with_cache(d)[1]
             for i, l in enumerate(layers):
-                all_outs[i] += list(outs[l].cpu().numpy().reshape(-1, N_DIMS))
+                tens = outs[l]
+                all_outs[i] += list(tens.cpu().numpy().reshape(-1, N_DIMS))
+                del tens
             # all_outs += out
     outs_np = [
     ]
@@ -317,7 +320,7 @@ class Decomposer:
         self.lattice_scores = None
         self.labs = [get_block_out_label(i) for i in range(N_BLOCKS)]
         self.ds_emb = get_layers_emb_dataset(
-            self.model_lens, self.dataset, self.labs)
+            self.model_lens, self.dataset, self.labs, use_save=True)
         print("Got embeddings")
 
     def load(self):
