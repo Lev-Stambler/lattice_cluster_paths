@@ -351,7 +351,7 @@ def restrict_to_related_path(lattice: List[List[List[float]]],
     return paths
 
 
-def restrict_to_related_vertex(lattice: List[List[List[float]]], layer: int, idx: int, rel_cutoff: float) -> List[int]:
+def restrict_to_related_vertex(lattice: List[npt.NDArray], layer: int, idx: int, rel_cutoff: float) -> List[npt.NDArray]:
     c_lattice = lattice  # cutoff_lattice(lattice, related_cutoff=rel_cutoff)
     below_layers = range(layer)[::-1]
     above_layers = range(layer + 1, len(c_lattice) + 1)
