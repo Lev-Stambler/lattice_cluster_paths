@@ -35,13 +35,14 @@ if DEBUG:
     N_BLOCKS = 6
     STRING_SIZE_CUTOFF = 200
 else:
-    N_DATASIZE = 3_000
+    N_DATASIZE = 1_800 # It gets killed aroun 1_800 idk why. Maybe we have a problem with token truncation somewhere
+
     # N_CLUSTERS_MIN = int(0.5 * N_DIMS)
     # N_CLUSTERS_MAX = 10 * N_DIMS
     N_CLUSTERS_MIN = N_DIMS
     N_CLUSTERS_MAX = N_DIMS + 1
     N_BLOCKS = 6
-    STRING_SIZE_CUTOFF = -1
+    STRING_SIZE_CUTOFF = 2_000
 
 
 def metadata_json():
@@ -143,17 +144,30 @@ def forward_pass(model_lens: transformer_lens.HookedTransformer, t: str, layer: 
 # TODO: we should have better labeling!!
 
 def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, dataset: Dataset, layers: List[str], use_save=True) -> npt.NDArray:
-    f_name = get_and_prepare_save_tag('dataset_embd')
-    if os.path.exists(f_name) and use_save:
-        return pickle.load(open(f_name, 'rb'))
+    # f_name = get_and_prepare_save_tag('dataset_embd')
+    # if os.path.exists(f_name) and use_save:
+    #     return pickle.load(open(f_name, 'rb'))
     # TODO: more efficient way with tokenization first?
+    all_finished = get_and_prepare_save_tag('all_finished_embd')
+    all_saved = True
+    # TODO: check more than just this. Check shapes? Or maybe metadata tag saying everything saved/ finished
+    def mmat_file(layer: str):
+        return f'metadata/{create_param_tag()}/mmat_t_layer_total_{layer}.dat'
+    for l in layers:
+        if not os.path.exists(mmat_file(l)):
+            all_saved = False
+    if use_save and all_saved and os.path.exists(all_finished):
+        return [np.memmap(mmat_file(l), dtype='float32', mode='r') for l in layers]
+
     all_outs = [[] for _ in layers]
     with torch.no_grad():
-        BS = 4
+        BS = 1
         for t in range(0, len(dataset), BS):
+            if t % 200 == 0:
+                print("ON", t)
             top_idx = min(t + BS, len(dataset))
             d = dataset[t:top_idx]
-            torch.cuda.empty_cache()
+            # torch.cuda.empty_cache()
             outs = model_lens.run_with_cache(d)[1]
             for i, l in enumerate(layers):
                 tens = outs[l]
@@ -162,18 +176,27 @@ def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, datas
             # all_outs += out
     outs_np = [
     ]
+    print("STARTING TO NUMPY IT")
     for l, _ in enumerate(layers):
         total_n_toks = len(all_outs[l])
-        out_np = np.memmap(f'/tmp/mmat_t_layer_total_{l}.dat', dtype='float32',
+        mmemap_name = mmat_file(l) if use_save else '/tmp/mmat_t_layer_total_{l}.dat'
+        out_np = np.memmap(mmemap_name, dtype='float32',
                            mode='w+', shape=(total_n_toks, N_DIMS))
-        BS = 1_024 * 8
+        # BS = 1_024 * 8
+        BS = 8
         for i in range(0, total_n_toks, BS):
+            if i % 200 == 0:
+                print("Numpy ON", i)
             top_idx = min(i + BS, total_n_toks)
             # print("ON", i, top_idx, all_outs[l][i:top_idx])
             out_np[i:top_idx, :] = np.array(all_outs[l][i:top_idx])
         outs_np.append(out_np)
+    # print("SAVING TO Pickle... todo: ACTUALLY USE THE mmat format...")
+    print("Finished numpying")
     if use_save:
-        pickle.dump(outs_np, open(f_name, 'wb'))
+        f = open(all_finished, 'w')
+        f.write('done')
+        f.close()
     return outs_np
 
 

@@ -32,6 +32,8 @@ decomp.load()
 decomp.lattice_scores[0].shape
 
 
+# 
+
 # In[ ]:
 
 
