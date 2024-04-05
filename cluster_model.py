@@ -66,6 +66,31 @@ def create_param_tag():
     return m.hexdigest()[:40]
 
 
+def get_top_scores(self, dataset: List[str], path: List[int],
+                   layer: int, weighting_per_layer, embds=None, top_n=100):
+    model = self.model_lens
+    n_blocks = len(path)
+    BOS_TOKEN = '<BOS>'
+    score_path = path
+    print(weighting_per_layer)
+    scores = self.score(
+        dataset,
+        score_path=score_path,
+        weighting_per_layer=weighting_per_layer,
+        use_log_scores=True,
+        embeds=embds
+    )
+
+    scores_per_token_set = np.array([max(s) for s in scores])
+    top_args = np.argsort(scores_per_token_set)[::-1]
+    # TODO: BOS?
+    tokens = [[BOS_TOKEN] + [model.tokenizer.decode(t) for t in model.tokenizer(d)[
+        'input_ids']] for d in dataset]
+    tokens_reord = [tokens[i] for i in top_args]
+    scores_reord = [scores[i] for i in top_args]
+    return tokens_reord[:top_n], scores_reord[:top_n]
+
+
 def score_for_neuron(self, to_score: List[str], primary_layer: int,
                      score_path: List[int],
                      top_n=100, primary_cutoff_mult_factor=3,
@@ -167,7 +192,7 @@ def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, datas
         BS = 1
         for t in range(0, len(dataset), BS):
             # if t % 200 == 0:
-                # print("ON", t)
+            # print("ON", t)
             top_idx = min(t + BS, len(dataset))
             d = dataset[t:top_idx]
             # torch.cuda.empty_cache()
@@ -339,7 +364,7 @@ class Decomposer:
     _k_search = 30
     # TODO: in params?
     # TODO: 2 params... one for lattice and one for scores
-    _weight_decay = 0.9
+    _weight_decay = 0.8
 
     def __init__(self, model_lens, dataset: Dataset, layers: List[str], n_max_features_per_neuron=10):
         torch.manual_seed(SEED)
@@ -428,52 +453,40 @@ class Decomposer:
             final_scores.append(s)
         return final_scores
 
-    def get_top_scores(self, dataset: List[str], path: List[int], layer: int, embds=None, top_n=100):
-        model = self.model_lens
-        n_blocks = len(path)
-        BOS_TOKEN = '<BOS>'
-        score_path = path
-        weighting_per_layer = utils.get_weighting_for_layer(
-            layer, n_blocks, weight_decay=self._weight_decay)
-        print(weighting_per_layer)
-        scores = self.score(
-            dataset,
-            score_path=score_path,
-            weighting_per_layer=weighting_per_layer,
-            use_log_scores=True,
-            embeds=embds
-        )
-
-        scores_per_token_set = np.array([max(s) for s in scores])
-        top_args = np.argsort(scores_per_token_set)[::-1]
-        # TODO: BOS?
-        tokens = [[BOS_TOKEN] + [model.tokenizer.decode(t) for t in model.tokenizer(d)[
-            'input_ids']] for d in dataset]
-        tokens_reord = [tokens[i] for i in top_args]
-        scores_reord = [scores[i] for i in top_args]
-        return tokens_reord[:top_n], scores_reord[:top_n]
+    def get_top_scores(self, dataset: List[str], path: List[int], layer: int, weighting_per_layer, embds=None, top_n=100):
+        return get_top_scores(self, dataset, path, layer,
+                       weighting_per_layer, embds, top_n)
 
     def scores_for_neuron(self, layer: int, neuron: int, dataset: List[str] = None, embds=None):
         if dataset is None:
             dataset = self.dataset
             embds = self.ds_emb
-        paths = graph.get_feature_paths(self.lattice_scores, layer, neuron, k_search=self._k_search, n_max_features=self.n_features_per_neuron)
+
+        n_blocks = len(self.layers)
+        weighting_per_layer = utils.get_weighting_for_layer(
+            layer, n_blocks, weight_decay=self._weight_decay)
+        weighting_per_layer[layer] = 1
+        paths = graph.get_feature_paths(self.lattice_scores, layer, neuron,
+                                        k_search=self._k_search, n_max_features=self.n_features_per_neuron,
+                                        weighting_per_layer=weighting_per_layer)
         scores_for_path = []
+        print("PATHS", paths)
         for (path, _path_score) in paths:
             print("LOOKING AT PATH", path)
             t, s = self.get_top_scores(
-                dataset, path, layer, embds)
+                dataset, path, layer, weighting_per_layer, embds)
             scores_for_path.append((t, s))
 
-		# TODO: maybe save json instead?
-        visualization.save_display_for_neuron(scores_for_path, paths, layer, neuron)
+            # TODO: maybe save json instead?
+        visualization.save_display_for_neuron(
+            scores_for_path, paths, layer, neuron)
         print("Finished for neuron", layer, neuron)
 
-    def scores_for_layer(self, layer: int, dataset: List[str]=None, embds=None):
+    def scores_for_layer(self, layer: int, dataset: List[str] = None, embds=None):
         for neuron in range(N_DIMS):
             self.scores_for_neuron(layer, neuron, dataset, embds)
 
-    def scores_for_all(self, dataset: List[str]=None, embds=None):
+    def scores_for_all(self, dataset: List[str] = None, embds=None):
         # TODO: check cached!!
         for layer in range(N_BLOCKS):
             self.scores_for_layer(layer, dataset=dataset, embds=embds)

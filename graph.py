@@ -6,12 +6,16 @@ import utils
 
 GRAPH_SCALING_RESOLUTION = 100_000
 
-def to_nx_graph(cluster_scores: List[npt.NDArray]) -> Tuple[nx.DiGraph, int, List[Dict[int, int]], List[Dict[int, int]]]:
+
+def _to_nx_graph(cluster_scores: List[npt.NDArray], weighting_per_edge=None) -> Tuple[nx.DiGraph, int, List[Dict[int, int]], List[Dict[int, int]]]:
     node_idx = 0
+    assert weighting_per_edge is None or len(weighting_per_edge) == len(
+        cluster_scores), "Need a weight for each edge from prior layer to next"
     # We need to account for all outgoing from the end
     n_clusters = sum([len(cs) for cs in cluster_scores]) + \
         len(cluster_scores[-1][0])
-    most_pos = (max([cs.max() for cs in cluster_scores]))  # + eps
+    most_pos_per_layer = [cs.max() * (1 if weighting_per_edge is None else weighting_per_edge[i])
+                          for i, cs in enumerate(cluster_scores)]  # + eps
 
     G = nx.DiGraph()
     graph_idx_to_node_idx = [{}]
@@ -27,9 +31,11 @@ def to_nx_graph(cluster_scores: List[npt.NDArray]) -> Tuple[nx.DiGraph, int, Lis
             node_idx_to_graph_idx[layer][i] = node_idx
             for j, c in enumerate(node_cs):
                 next_idx = layer_start_idx + n_in_layer + j
-                    
+
                 # We need all the weights to be positive but the shortest paths to be the most important
-                w = round((-1 * c + most_pos)
+                w = round((-1 * c *
+                           (1 if weighting_per_edge is None else weighting_per_edge[layer])
+                           + most_pos_per_layer[layer])
                           * GRAPH_SCALING_RESOLUTION)
                 assert w >= 0, f"Weight is negative: {w}"
 
@@ -48,21 +54,25 @@ def to_nx_graph(cluster_scores: List[npt.NDArray]) -> Tuple[nx.DiGraph, int, Lis
 
     # nx.draw(G, with_labels=True, pos=nx.nx_pydot.graphviz_layout(G, prog='dot'))
     # plt.savefig("graph.png")
-    return G, source, sink, graph_idx_to_node_idx, node_idx_to_graph_idx, most_pos
+    return G, source, sink, graph_idx_to_node_idx, node_idx_to_graph_idx, most_pos_per_layer
 
-def top_k_dag_paths(layers: List[npt.NDArray], layer: int, neuron: int, k: int, exclude_set = {}):
+
+def top_k_dag_paths(layers: List[npt.NDArray], layer: int, neuron: int, k: int,
+                    weighting_per_edge: List[float] = None, exclude_set={}):
     r = utils.restrict_to_related_vertex(layers, layer, neuron)
     # print(r)
-    graph, source, sink, graph_layers_to_idx, node_layers_to_graph, most_pos = to_nx_graph(
-        r)
-    
+    graph, source, sink, graph_layers_to_idx, \
+        node_layers_to_graph, most_pos_per_layer = _to_nx_graph(
+            r, weighting_per_edge)
+
     for rm_layer in exclude_set.keys():
         for node in exclude_set[rm_layer]:
-            print("Removing", rm_layer, node, node_layers_to_graph[rm_layer][node])
+            print("Removing", rm_layer, node,
+                  node_layers_to_graph[rm_layer][node])
             graph.remove_node(node_layers_to_graph[rm_layer][node])
 
     X = nx.shortest_simple_paths(graph, source, sink, weight='weight')
-    
+
     paths = []
     for counter, path in enumerate(X):
         path_no_sink_no_source = path[1:-1]
@@ -73,23 +83,34 @@ def top_k_dag_paths(layers: List[npt.NDArray], layer: int, neuron: int, k: int, 
                          for i, node in enumerate(path_no_sink_no_source)]
         assert len(path_node_idx) == len(layers) + 1
         path_node_idx[layer] = neuron
-        total_weight = sum([graph[path[i]][path[i + 1]]['weight']
-                            for i in range(len(path) - 1)])
-        total_weight_no_sink = total_weight - 1
-        recovered_weight = -1 * (total_weight_no_sink / GRAPH_SCALING_RESOLUTION - most_pos * len(path_no_sink_no_source))
+
+        recovered_weight = sum([
+            -1 * weighting_per_edge[i] * (graph[path_no_sink_no_source[i]][path_no_sink_no_source[i + 1]]['weight'] / GRAPH_SCALING_RESOLUTION \
+                - most_pos_per_layer[i]) 
+            for i in range(0, len(path_no_sink_no_source) - 1)])  # Remove source and sink
+        
         paths.append((path_node_idx, recovered_weight))
-        # print(paths[-1])
+        print(paths[-1])
         if counter == k-1:
             break
     return paths
 
-def get_feature_paths(lattice, layer: int, neuron: int, k_search=20, n_max_features=5):
+
+def get_feature_paths(lattice, layer: int, neuron: int, k_search=20,
+                      weighting_per_layer: List[float] = None, n_max_features=5):
     print(f"Getting top {k_search} paths")
-    searched_paths = top_k_dag_paths(lattice, layer=layer, neuron=neuron, k=k_search)
+    assert weighting_per_layer is None or len(
+        weighting_per_layer) == len(lattice) + 1
+    assert len(lattice) > 1, "Need at least 2 layers"
+    weighting_per_edge = None if weighting_per_layer is None else weighting_per_layer[1:]
+    searched_paths = top_k_dag_paths(
+        lattice, layer=layer, neuron=neuron, k=k_search,
+        weighting_per_edge=weighting_per_edge)
     print(f"Got top {k_search} paths")
     paths = [p[0] for p in searched_paths]
 
     n_layers = len(lattice)
+
     def cluster_similar_paths():
         # Get a pairwise "similarity" between the paths
         sims = np.zeros((k_search, k_search))
@@ -101,9 +122,11 @@ def get_feature_paths(lattice, layer: int, neuron: int, k_search=20, n_max_featu
         # Now we can employ a greedy-type algorithm
         clusters = []
         path_idx_to_cluster = np.zeros(k_search) - 1
-        clustered = np.zeros(k_search) == 1 # A list of whether a path has been clustered
+        # A list of whether a path has been clustered
+        clustered = np.zeros(k_search) == 1
 
         diff_cutoff = n_layers - 1
+
         def start_over():
             nonlocal curr_idx, curr_cluster
             curr_idx = 0
@@ -142,7 +165,7 @@ def get_feature_paths(lattice, layer: int, neuron: int, k_search=20, n_max_featu
                 diff_cutoff -= 1
                 print("Trying with cluster diffence cutoff", diff_cutoff)
         return clusters
-        
+
     paths_distinct = cluster_similar_paths()
     path_reps = [searched_paths[p[0]] for p in paths_distinct]
     return path_reps
