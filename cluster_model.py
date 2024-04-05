@@ -6,7 +6,7 @@ import numpy as np
 import numpy.typing as npt
 import torch
 import transformer_lens
-import metric
+import kernel
 import hashlib
 import json
 import utils
@@ -138,7 +138,6 @@ def forward_pass(model_lens: transformer_lens.HookedTransformer, t: str, layer: 
     with torch.no_grad():
         return model_lens.run_with_cache(t)[1][layer]
 
-# TODO: we should have better labeling!!
 
 
 def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, dataset: Dataset, layers: List[str], use_save=True) -> List[npt.NDArray]:
@@ -253,7 +252,7 @@ def cluster_model_lattice(ds: List[npt.NDArray]) -> List[List[List[float]]]:
         print("Trying to set dataset for layer", i)
         ds_mmep[:] = ds[i]
         print("Set dataset for layer", i, "Getting proba")
-        probs_for_all_layers[i][:] = metric.predict_proba(
+        probs_for_all_layers[i][:] = kernel.predict_proba(
             ds_mmep, batch_size=128).T
         print("Set predictions for layer", i)
     print("Set all probs with predictions")
@@ -285,29 +284,30 @@ def cutoff_lattice(lattice: List[List[List[float]]], related_cutoff=1):
     return r
 
 
+# TODO: this is no longer log?
 def log_score_tokens_for_path(embd_dataset: List[npt.NDArray],
                               path: List[int],
-                              score_weighting_per_layer: npt.NDArray, BS=1_024*64):
+                              score_weighting_per_layer: npt.NDArray, BS=1_024*8):
     """
     embd_dataset: The outer index corresponds to the layer, the inner index corresponds to the token
     """
     # Set the outer index to the token
     # token_per_layer = embd_dataset.swapaxes(0, 1)
     n_tokens = embd_dataset[0].shape[0]
-    scores = np.zeros(n_tokens)
+    scores = np.ones(n_tokens)
     assert len(embd_dataset) == len(path)
 
     for i in range(0, n_tokens, BS):
-        if i % (BS * 100) == 0:
+        if i % (BS * 10) == 0:
             print("Scoring on", i, "of", n_tokens)
         top_idx = min(i + BS, n_tokens)
         for layer in range(len(path)):
-            local_scores = metric.predict_proba(
+            local_scores = kernel.predict_proba(
                 embd_dataset[layer][i:top_idx])
             local_scores = local_scores[:, path[layer]]
-            # TODO: *integrate ideas of just getting overall log score*
-            scores[i:top_idx] += score_weighting_per_layer[layer] * \
-                np.log(local_scores)
+
+            scores[i:top_idx] *= local_scores ** score_weighting_per_layer[layer] 
+                # local_scores
     return scores
 
 
@@ -387,7 +387,7 @@ class Decomposer:
                                 BS=BS,
                                 embeds=embeds, weighting_per_layer=weighting_per_layer)
 
-    def score(self, to_score: List[str], score_path: List[int], embeds: Union[npt.NDArray, None] = None, weighting_per_layer=None, BS=128, use_log_scores=True) -> List[List[float]]:
+    def score(self, to_score: List[str], score_path: List[int], embeds: Union[npt.NDArray, None] = None, weighting_per_layer=None, use_log_scores=True) -> List[List[float]]:
         """
         Get the scores for the tokens in the dataset
         """
@@ -398,7 +398,7 @@ class Decomposer:
             to_score, embeds)
         log_scores = log_score_tokens_for_path(
             embd_dataset=embeds, path=score_path,
-            score_weighting_per_layer=weighting_per_layer, BS=BS)
+            score_weighting_per_layer=weighting_per_layer)
         item_to_scores = {}
         # return log_scores
         # TODO: BATCHING!

@@ -9,7 +9,6 @@ import numpy.typing as npt
 
 # Get the activations for the best dict features
 # TODO: fix up
-GRAPH_SCALING_RESOLUTION = 100_000
 
 
 def top_k_dag_paths_dynamic(layers: List[List[List[float]]], k: int, top_layer: int = None):

@@ -35,9 +35,15 @@ def _exp_cos_kernel(x, features, kernel_width):
     # print(ret.shape, x.shape, features.shape, cos_inner_prod.shape, exp.shape)
     return ret
 
+def _inner_product(x, features, kernel_width):
+    return (features @ np.swapaxes(x, -1, -2)).squeeze(axis=-1)
+
 
 # TODO: make kernel width a parameter
-def predict_proba(x: npt.NDArray, batch_size=-1, kernel_width=0.1):
+# TODO: make the type of kernel used a parm
+def predict_proba(x: npt.NDArray, batch_size=-1, kernel_width=0.01):
+    kernel = _inner_product
+
     x = _check_size(x)
     n_dims = x.shape[-1]
     features = np.eye(n_dims)
@@ -49,7 +55,7 @@ def predict_proba(x: npt.NDArray, batch_size=-1, kernel_width=0.1):
         out = np.zeros((x.shape[0], features.shape[1]))
         for i in range(0, x.shape[0], batch_size):
             top = min(i + batch_size, x.shape[0])
-            out[i:top] = _exp_cos_kernel(
+            out[i:top] = kernel(
                 x[i:top], features, kernel_width=kernel_width)
         return out
-    return _exp_cos_kernel(x, features, kernel_width=kernel_width)
+    return kernel(x, features, kernel_width=kernel_width)

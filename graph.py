@@ -85,7 +85,7 @@ def top_k_dag_paths(layers: List[npt.NDArray], layer: int, neuron: int, k: int, 
 
 def get_feature_paths(lattice, layer: int, neuron: int, k_search=20, n_max_features=5):
     print(f"Getting top {k_search} paths")
-    searched_paths = utils.top_k_dag_paths(lattice, layer=layer, neuron=neuron, k=k_search)
+    searched_paths = top_k_dag_paths(lattice, layer=layer, neuron=neuron, k=k_search)
     print(f"Got top {k_search} paths")
     paths = [p[0] for p in searched_paths]
 
