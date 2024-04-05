@@ -430,3 +430,5 @@ class Decomposer:
         # TODO: check cached!!
         for layer in range(N_BLOCKS):
             self.scores_for_layer(layer, dataset=dataset, embds=embds)
+
+# TODO: MUTUAL INFORMATION!!!!
