@@ -297,6 +297,8 @@ def log_score_tokens_for_path(embd_dataset: List[npt.NDArray],
     scores = np.ones(n_tokens)
     assert len(embd_dataset) == len(path)
 
+	# TODO: okay?
+    BS = n_tokens
     for i in range(0, n_tokens, BS):
         if i % (BS * 10) == 0:
             print("Scoring on", i, "of", n_tokens)
@@ -306,8 +308,12 @@ def log_score_tokens_for_path(embd_dataset: List[npt.NDArray],
                 embd_dataset[layer][i:top_idx])
             local_scores = local_scores[:, path[layer]]
 
+			# Make sure that we never multiply by a negative number
+            # Negative just means that we are anti-correlated
+            local_scores = local_scores * (local_scores > 0.0)
             scores[i:top_idx] *= local_scores ** score_weighting_per_layer[layer] 
                 # local_scores
+    scores = np.abs(scores) # Make sure that we are always positive
     return scores
 
 
