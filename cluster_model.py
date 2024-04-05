@@ -300,8 +300,8 @@ def log_score_tokens_for_path(embd_dataset: List[npt.NDArray],
     assert len(embd_dataset) == len(path)
 
     for i in range(0, n_tokens, BS):
-        if i % (BS * 10) == 0:
-            print("Scoring on", i, "of", n_tokens)
+        # if i % (BS * 10) == 0:
+        #     print("Scoring on", i, "of", n_tokens)
         top_idx = min(i + BS, n_tokens)
         for layer in range(len(path)):
             local_scores = kernel.predict_proba(
