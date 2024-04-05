@@ -12,6 +12,7 @@ import numpy.typing as npt
 
 
 def get_weighting_for_layer(layer: int, n_layers: int, weight_decay=0.95, prior_layers_decay=None):
+    # TODO: SOMETHING CLEANER
     if prior_layers_decay is None:
         prior_layers_decay = weight_decay
     r = np.ones(n_layers)
@@ -22,6 +23,9 @@ def get_weighting_for_layer(layer: int, n_layers: int, weight_decay=0.95, prior_
     for i in range(layer + 1, n_layers):
         # Decrease by Gx per layer
         r[i] = G ** (i - layer)
+    # TODO: THE LAST LAYER SEEMS TO SELECTIVE... we need a smarter way of doing things than simply choosing highest
+    # if layer != n_layers - 1:
+        # r[-1] = 0.0
     return r
     
 def top_k_dag_paths_dynamic(layers: List[List[List[float]]], k: int, top_layer: int = None):

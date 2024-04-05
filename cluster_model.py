@@ -41,6 +41,7 @@ else:
 
     # N_CLUSTERS_MIN = int(0.5 * N_DIMS)
     # N_CLUSTERS_MAX = 10 * N_DIMS
+    # TODO: DEL ME
     N_CLUSTERS_MIN = N_DIMS
     N_CLUSTERS_MAX = N_DIMS + 1
     N_BLOCKS = 6
@@ -181,7 +182,8 @@ def cluster_model_lattice(ds: List[npt.NDArray]) -> List[List[List[float]]]:
     save_name = get_and_prepare_save_tag('cluster_scores')
     if os.path.exists(save_name):
         print("Loading cluster scores from cache")
-        return pickle.load(open(save_name, 'rb'))
+        r = pickle.load(open(save_name, 'rb'))
+        return r
 
     print("Getting cluster scores for lattice")
 
@@ -290,7 +292,8 @@ class Decomposer:
     # TODO: in params?
     # TODO: 2 params... one for lattice and one for scores
     _weight_decay = 0.9
-    _weight_decay_path_sel = 0.8
+    _weight_decay_path_sel = 0.90
+    # TODO: THERE IS STILL A PROBLEM WHERE WE REALLY AREN'T LOOKING AT TOTAL CORRELATION THROUGH THINGS...
 
     def __init__(self, model_lens, dataset: Dataset, layers: List[str], n_max_features_per_neuron=5):
         torch.manual_seed(SEED)
@@ -419,7 +422,8 @@ class Decomposer:
         print("Finished for neuron", layer, neuron)
 
     def scores_for_layer(self, layer: int, dataset: List[str] = None, embds=None):
-        for neuron in range(N_DIMS):
+        # TODO: diff dem by feature
+        for neuron in range(N_DIMS * 2):
             self.scores_for_neuron(layer, neuron, dataset, embds)
 
     def scores_for_all(self, dataset: List[str] = None, embds=None):
