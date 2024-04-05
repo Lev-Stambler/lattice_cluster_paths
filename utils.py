@@ -11,6 +11,19 @@ import numpy.typing as npt
 # TODO: fix up
 
 
+def get_weighting_for_layer(layer: int, n_layers: int, weight_decay=0.95, prior_layers_decay=None):
+    if prior_layers_decay is None:
+        prior_layers_decay = weight_decay
+    r = np.ones(n_layers)
+    r[layer] = 1
+    G = weight_decay
+    for i in range(layer):
+        r[i] = prior_layers_decay ** (layer - i)
+    for i in range(layer + 1, n_layers):
+        # Decrease by Gx per layer
+        r[i] = G ** (i - layer)
+    return r
+    
 def top_k_dag_paths_dynamic(layers: List[List[List[float]]], k: int, top_layer: int = None):
     n_to_top_layer = len(layers[-1][0])
     layers = layers + [

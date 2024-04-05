@@ -10,6 +10,8 @@ import kernel
 import hashlib
 import json
 import utils
+import visualization
+import graph
 
 # MixtureModel = KMeansMixture
 # Use RBF Kernel https://en.wikipedia.org/wiki/Radial_basis_function_kernel
@@ -125,6 +127,7 @@ def get_and_prepare_save_tag(prepend: str):
 
 def get_block_base_label(i): return f'blocks.{i}'
 
+
 def get_block_out_label(i): return f'{get_block_base_label(i)}.hook_resid_post'
 
 
@@ -137,7 +140,6 @@ def forward_on_block(model, block_idx: int, data: npt.NDArray):
 def forward_pass(model_lens: transformer_lens.HookedTransformer, t: str, layer: str) -> torch.Tensor:
     with torch.no_grad():
         return model_lens.run_with_cache(t)[1][layer]
-
 
 
 def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, dataset: Dataset, layers: List[str], use_save=True) -> List[npt.NDArray]:
@@ -153,7 +155,7 @@ def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, datas
             all_layers.append(
                 # TODO: store n_tokens
                 # TODO: make storage class thi
-                np.memmap(mmat_file(i), dtype='float32', mode='r'))#, shape=(459325, N_DIMS)))
+                np.memmap(mmat_file(i), dtype='float32', mode='r'))  # , shape=(459325, N_DIMS)))
         # We don't store the shape, so we need to reshape to the original shape
         # TODO: maybe store the shape instead?
         for i in range(len(all_layers)):
@@ -164,8 +166,8 @@ def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, datas
     with torch.no_grad():
         BS = 1
         for t in range(0, len(dataset), BS):
-            if t % 200 == 0:
-                print("ON", t)
+            # if t % 200 == 0:
+                # print("ON", t)
             top_idx = min(t + BS, len(dataset))
             d = dataset[t:top_idx]
             # torch.cuda.empty_cache()
@@ -184,8 +186,8 @@ def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, datas
         # BS = 1_024 * 8
         BS = 8
         for i in range(0, total_n_toks, BS):
-            if i % 200 == 0:
-                print("Numpy ON", i)
+            # if i % 200 == 0:
+            #     print("Numpy ON", i)
             top_idx = min(i + BS, total_n_toks)
             # print("ON", i, top_idx, all_outs[l][i:top_idx])
             out_np[i:top_idx, :] = np.array(all_outs[l][i:top_idx])
@@ -287,7 +289,7 @@ def cutoff_lattice(lattice: List[List[List[float]]], related_cutoff=1):
 # TODO: this is no longer log?
 def log_score_tokens_for_path(embd_dataset: List[npt.NDArray],
                               path: List[int],
-                              score_weighting_per_layer: npt.NDArray, BS=1_024*8):
+                              score_weighting_per_layer: npt.NDArray, BS=1_024*2):
     """
     embd_dataset: The outer index corresponds to the layer, the inner index corresponds to the token
     """
@@ -306,12 +308,12 @@ def log_score_tokens_for_path(embd_dataset: List[npt.NDArray],
                 embd_dataset[layer][i:top_idx])
             local_scores = local_scores[:, path[layer]]
 
-			# Make sure that we never multiply by a negative number
+            # Make sure that we never multiply by a negative number
             # Negative just means that we are anti-correlated
             local_scores = local_scores * (local_scores > 0.0)
-            scores[i:top_idx] *= local_scores ** score_weighting_per_layer[layer] 
-                # local_scores
-    scores = np.abs(scores) # Make sure that we are always positive
+            scores[i:top_idx] *= local_scores ** score_weighting_per_layer[layer]
+            # local_scores
+    scores = np.abs(scores)  # Make sure that we are always positive
     return scores
 
 
@@ -334,8 +336,12 @@ def get_dataset(name: str):
 
 class Decomposer:
     lattice_scores: List[List[List[float]]]
+    _k_search = 30
+    # TODO: in params?
+    # TODO: 2 params... one for lattice and one for scores
+    _weight_decay = 0.9
 
-    def __init__(self, model_lens, dataset: Dataset, layers: List[str]):
+    def __init__(self, model_lens, dataset: Dataset, layers: List[str], n_max_features_per_neuron=10):
         torch.manual_seed(SEED)
         np.random.seed(SEED)
         print(f"Creating decomposer with parameter hash {create_param_tag()}")
@@ -353,6 +359,7 @@ class Decomposer:
         self.labs = [get_block_out_label(i) for i in range(N_BLOCKS)]
         self.ds_emb = get_layers_emb_dataset(
             self.model_lens, self.dataset, self.labs, use_save=True)
+        self.n_features_per_neuron = n_max_features_per_neuron
         print("Got embeddings")
 
     def load(self):
@@ -420,3 +427,53 @@ class Decomposer:
                 s = np.exp(s)
             final_scores.append(s)
         return final_scores
+
+    def get_top_scores(self, dataset: List[str], path: List[int], layer: int, embds=None, top_n=100):
+        model = self.model_lens
+        n_blocks = len(path)
+        BOS_TOKEN = '<BOS>'
+        score_path = path
+        weighting_per_layer = utils.get_weighting_for_layer(
+            layer, n_blocks, weight_decay=self._weight_decay)
+        print(weighting_per_layer)
+        scores = self.score(
+            dataset,
+            score_path=score_path,
+            weighting_per_layer=weighting_per_layer,
+            use_log_scores=True,
+            embeds=embds
+        )
+
+        scores_per_token_set = np.array([max(s) for s in scores])
+        top_args = np.argsort(scores_per_token_set)[::-1]
+        # TODO: BOS?
+        tokens = [[BOS_TOKEN] + [model.tokenizer.decode(t) for t in model.tokenizer(d)[
+            'input_ids']] for d in dataset]
+        tokens_reord = [tokens[i] for i in top_args]
+        scores_reord = [scores[i] for i in top_args]
+        return tokens_reord[:top_n], scores_reord[:top_n]
+
+    def scores_for_neuron(self, layer: int, neuron: int, dataset: List[str] = None, embds=None):
+        if dataset is None:
+            dataset = self.dataset
+            embds = self.ds_emb
+        paths = graph.get_feature_paths(self.lattice_scores, layer, neuron, k_search=self._k_search, n_max_features=self.n_features_per_neuron)
+        scores_for_path = []
+        for (path, _path_score) in paths:
+            print("LOOKING AT PATH", path)
+            t, s = self.get_top_scores(
+                dataset, path, layer, embds)
+            scores_for_path.append((t, s))
+
+		# TODO: maybe save json instead?
+        visualization.save_display_for_neuron(scores_for_path, paths, layer, neuron)
+        print("Finished for neuron", layer, neuron)
+
+    def scores_for_layer(self, layer: int, dataset: List[str]=None, embds=None):
+        for neuron in range(N_DIMS):
+            self.scores_for_neuron(layer, neuron, dataset, embds)
+
+    def scores_for_all(self, dataset: List[str]=None, embds=None):
+        # TODO: check cached!!
+        for layer in range(N_BLOCKS):
+            self.scores_for_layer(layer, dataset=dataset, embds=embds)
