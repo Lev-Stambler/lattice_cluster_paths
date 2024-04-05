@@ -60,7 +60,6 @@ def _to_nx_graph(cluster_scores: List[npt.NDArray], weighting_per_edge=None) -> 
 def top_k_dag_paths(layers: List[npt.NDArray], layer: int, neuron: int, k: int,
                     weighting_per_edge: List[float] = None, exclude_set={}):
     r = utils.restrict_to_related_vertex(layers, layer, neuron)
-    # print(r)
     graph, source, sink, graph_layers_to_idx, \
         node_layers_to_graph, most_pos_per_layer = _to_nx_graph(
             r, weighting_per_edge)
@@ -97,12 +96,11 @@ def top_k_dag_paths(layers: List[npt.NDArray], layer: int, neuron: int, k: int,
 
 
 def get_feature_paths(lattice, layer: int, neuron: int, k_search=20,
-                      weighting_per_layer: List[float] = None, n_max_features=5):
+                      weighting_per_edge: List[float] = None, n_max_features=5):
     print(f"Getting top {k_search} paths")
-    assert weighting_per_layer is None or len(
-        weighting_per_layer) == len(lattice) + 1
+    assert weighting_per_edge is None or len(
+        weighting_per_edge) == len(lattice)
     assert len(lattice) > 1, "Need at least 2 layers"
-    weighting_per_edge = None if weighting_per_layer is None else weighting_per_layer[1:]
     searched_paths = top_k_dag_paths(
         lattice, layer=layer, neuron=neuron, k=k_search,
         weighting_per_edge=weighting_per_edge)

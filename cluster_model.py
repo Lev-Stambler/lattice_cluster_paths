@@ -16,7 +16,6 @@ import graph
 # MixtureModel = KMeansMixture
 # Use RBF Kernel https://en.wikipedia.org/wiki/Radial_basis_function_kernel
 
-
 DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 # DEFAULT_DEVICE = 'cpu'
 
@@ -90,56 +89,6 @@ def get_top_scores(self, dataset: List[str], path: List[int],
     scores_reord = [scores[i] for i in top_args]
     return tokens_reord[:top_n], scores_reord[:top_n]
 
-
-def score_for_neuron(self, to_score: List[str], primary_layer: int,
-                     score_path: List[int],
-                     top_n=100, primary_cutoff_mult_factor=3,
-                     BS=128,
-                     embeds: Union[npt.NDArray, None] = None,
-                     weighting_per_layer=None) -> List[int]:
-    raise NotImplementedError(
-        "This is not implemented yet for non mixture based")
-    top_for_primary = top_n * primary_cutoff_mult_factor
-    embeds, tokens_to_ds, _ = self._get_ds_metadata(
-        to_score, embeds)
-    max_n_tokens = embeds.shape[1]
-
-    scores: List[(int, float)] = []
-
-    for i in range(0, max_n_tokens, BS):
-        top_idx = min(i + BS, max_n_tokens)
-        e = embeds[:, i:top_idx]
-        gmm_scores = score_for_gmm(
-            self.gmms[primary_layer], e[primary_layer])
-        to_add = zip(
-            range(i, top_idx),
-            list(gmm_scores[:, score_path[primary_layer]])
-        )
-        to_add = list(to_add)
-        scores = scores + to_add
-
-    top_by_score = sorted(scores, key=lambda x: x[1], reverse=True)[
-        :top_for_primary]
-
-    # Now, we want to get sort the top N by the path
-    # TODO: weighting?
-
-    top_score_idx = list([tokens_to_ds[x[0]] for x in top_by_score])
-    included = set()
-    # Dedup
-    top_score_idx = [x for x in top_score_idx if not (
-        x in included or included.add(x))]
-
-    top_tokens = [x[0] for x in top_by_score]
-    print("TOP TOKENS", len(top_tokens), top_tokens)
-    embeds_for_top = embeds[:, top_tokens]
-    ds_scored = [to_score[i] for i in top_score_idx]
-    print("TOP SCORE IDX", top_score_idx)
-    print("DS SCORED", len(ds_scored))
-    print("EMB FOR TOP", embeds_for_top.shape)
-    return top_tokens, top_score_idx, self.score(ds_scored, score_path, weighting_per_layer=weighting_per_layer)
-
-
 def get_and_prepare_save_tag(prepend: str):
     if not os.path.exists('metadata'):
         os.mkdir('metadata')
@@ -148,7 +97,6 @@ def get_and_prepare_save_tag(prepend: str):
         json.dump(metadata_json(), open(
             f'metadata/{create_param_tag()}/metadata.json', 'w'))
     return f'metadata/{create_param_tag()}/{prepend}.pkl'
-
 
 def get_block_base_label(i): return f'blocks.{i}'
 
@@ -165,7 +113,6 @@ def forward_on_block(model, block_idx: int, data: npt.NDArray):
 def forward_pass(model_lens: transformer_lens.HookedTransformer, t: str, layer: str) -> torch.Tensor:
     with torch.no_grad():
         return model_lens.run_with_cache(t)[1][layer]
-
 
 def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, dataset: Dataset, layers: List[str], use_save=True) -> List[npt.NDArray]:
 
@@ -224,30 +171,6 @@ def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, datas
         f.close()
     return outs_np
 
-
-# def get_per_layer_emb_dataset(model_lens: transformer_lens.HookedTransformer, dataset: Dataset, layers: List[str], use_save=True) -> List[npt.NDArray]:
-#     layers_out = []
-#     for layer in layers:
-#         ds_name = get_and_prepare_save_tag(f'{layer}_dataset_embd')
-
-#         # TODO: DOES THIS WORK?
-#         if os.path.exists(ds_name) and use_save:
-#             print("Loading dataset from cache")
-#             dataset_np = pickle.load(open(ds_name, 'rb'))
-#         else:
-#             # TODO: think about this in terms of flattening the dataset
-#             print("Getting dataset for layer", layer)
-#             dataset_np_non_flat = [np.array(forward_pass(model_lens, t, layer).squeeze(
-#                 0).detach().cpu().numpy()) for t in dataset]
-#             # Flatten
-#             print(dataset_np_non_flat[0].shape)
-#             dataset_np = np.array([d for ds in dataset_np_non_flat for d in ds])
-#             print("Saving dataset to cache")
-#             pickle.dump(dataset_np, open(ds_name, 'wb'))
-#         layers_out.append(dataset_np)
-#     return np.stack(layers_out, axis=0)
-
-
 def cluster_model_lattice(ds: List[npt.NDArray]) -> List[List[List[float]]]:
     """
     We will take a bit of a short cut here. Rather than passing *representatives* from each centroid to find the "strength" on the following centroids,
@@ -266,7 +189,7 @@ def cluster_model_lattice(ds: List[npt.NDArray]) -> List[List[List[float]]]:
     # TODO: parameterize by N_DIMS
     probs_for_all_layers = [
         np.memmap(f'/tmp/mmat_prob_layer_{layer}.dat', dtype='float32',
-                  mode='w+', shape=(N_DIMS, ds[layer].shape[0]))
+                  mode='w+', shape=(N_DIMS * 2, ds[layer].shape[0])) # * 2 as each dimension has a +1 and -1
         for layer in range(len(ds))]
     for l in probs_for_all_layers:
         l[:] = 0.0
@@ -361,12 +284,15 @@ def get_dataset(name: str):
 
 class Decomposer:
     lattice_scores: List[List[List[float]]]
-    _k_search = 30
+    # TODO: there has to be a smarter K-search alg
+    # _k_search = N_DIMS * 2 #TODO: Back
+    _k_search = 100
     # TODO: in params?
     # TODO: 2 params... one for lattice and one for scores
-    _weight_decay = 0.8
+    _weight_decay = 0.9
+    _weight_decay_path_sel = 0.8
 
-    def __init__(self, model_lens, dataset: Dataset, layers: List[str], n_max_features_per_neuron=10):
+    def __init__(self, model_lens, dataset: Dataset, layers: List[str], n_max_features_per_neuron=5):
         torch.manual_seed(SEED)
         np.random.seed(SEED)
         print(f"Creating decomposer with parameter hash {create_param_tag()}")
@@ -410,18 +336,18 @@ class Decomposer:
             token_to_pos_original_ds) == embeds[0].shape[0]
         return embeds, token_to_original_ds, token_to_pos_original_ds
 
-    def score_for_neuron(self, to_score: List[str], primary_layer: int,
-                         score_path: List[int],
-                         top_n=100, primary_cutoff_factor=3,
-                         BS=1,
-                         embeds: Union[torch.Tensor, None] = None,
-                         weighting_per_layer=None) -> List[int]:
-        """
-        """
-        return score_for_neuron(self, to_score, primary_layer, score_path,
-                                top_n=top_n, primary_cutoff_mult_factor=primary_cutoff_factor,
-                                BS=BS,
-                                embeds=embeds, weighting_per_layer=weighting_per_layer)
+    # def score_for_neuron(self, to_score: List[str], primary_layer: int,
+    #                      score_path: List[int],
+    #                      top_n=100, primary_cutoff_factor=3,
+    #                      BS=1,
+    #                      embeds: Union[torch.Tensor, None] = None,
+    #                      weighting_per_layer=None) -> List[int]:
+    #     """
+    #     """
+    #     return score_for_neuron(self, to_score, primary_layer, score_path,
+    #                             top_n=top_n, primary_cutoff_mult_factor=primary_cutoff_factor,
+    #                             BS=BS,
+    #                             embeds=embeds, weighting_per_layer=weighting_per_layer)
 
     def score(self, to_score: List[str], score_path: List[int], embeds: Union[npt.NDArray, None] = None, weighting_per_layer=None, use_log_scores=True) -> List[List[float]]:
         """
@@ -455,27 +381,37 @@ class Decomposer:
 
     def get_top_scores(self, dataset: List[str], path: List[int], layer: int, weighting_per_layer, embds=None, top_n=100):
         return get_top_scores(self, dataset, path, layer,
-                       weighting_per_layer, embds, top_n)
+                              weighting_per_layer, embds, top_n)
 
-    def scores_for_neuron(self, layer: int, neuron: int, dataset: List[str] = None, embds=None):
+    def scores_for_neuron(self, layer: int, neuron: int, dataset: List[str] = None, n_features_per_neuron=None, embds=None):
+        if n_features_per_neuron is None:
+            n_features_per_neuron = self.n_features_per_neuron
         if dataset is None:
             dataset = self.dataset
             embds = self.ds_emb
 
         n_blocks = len(self.layers)
+
+        weighting_per_layer_path_sel = utils.get_weighting_for_layer(
+            layer, n_blocks, weight_decay=self._weight_decay_path_sel)
+        weighting_per_edge = np.concatenate((weighting_per_layer_path_sel[:layer],
+                                            weighting_per_layer_path_sel[layer + 1:]))
+
         weighting_per_layer = utils.get_weighting_for_layer(
             layer, n_blocks, weight_decay=self._weight_decay)
         weighting_per_layer[layer] = 1
+        print("WEIGHTING PER LAYER", weighting_per_layer, "WEIGHTING PER EDGE", weighting_per_edge)
         paths = graph.get_feature_paths(self.lattice_scores, layer, neuron,
-                                        k_search=self._k_search, n_max_features=self.n_features_per_neuron,
-                                        weighting_per_layer=weighting_per_layer)
+                                        k_search=self._k_search, n_max_features=n_features_per_neuron,
+                                        weighting_per_edge=weighting_per_edge)
         scores_for_path = []
         print("PATHS", paths)
-        for (path, _path_score) in paths:
-            print("LOOKING AT PATH", path)
+        for i, (path, _path_score) in enumerate(paths):
+            print("LOOKING AT PATH", path, i + 1, "out of", len(paths))
             t, s = self.get_top_scores(
                 dataset, path, layer, weighting_per_layer, embds)
             scores_for_path.append((t, s))
+            print("Done with path", i + 1, "out of", len(paths))
 
             # TODO: maybe save json instead?
         visualization.save_display_for_neuron(

@@ -47,6 +47,9 @@ def predict_proba(x: npt.NDArray, batch_size=-1, kernel_width=0.01):
     x = _check_size(x)
     n_dims = x.shape[-1]
     features = np.eye(n_dims)
+    features = np.repeat(features, 2, axis=-1)
+    features[:, 1::2] *= -1
+    features = features.T
     # features = ortho_group.rvs(n_dims) # TODO: WE NEED TO SAVE THIS IF WE USE THIS
     features = np.expand_dims(features, axis=0)
     assert x.shape[2] == features.shape[2]
