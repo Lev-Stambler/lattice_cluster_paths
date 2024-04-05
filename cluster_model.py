@@ -297,8 +297,6 @@ def log_score_tokens_for_path(embd_dataset: List[npt.NDArray],
     scores = np.ones(n_tokens)
     assert len(embd_dataset) == len(path)
 
-	# TODO: okay?
-    BS = n_tokens
     for i in range(0, n_tokens, BS):
         if i % (BS * 10) == 0:
             print("Scoring on", i, "of", n_tokens)
