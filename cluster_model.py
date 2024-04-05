@@ -35,7 +35,8 @@ if DEBUG:
     N_BLOCKS = 6
     STRING_SIZE_CUTOFF = 200
 else:
-    N_DATASIZE = 1_800 # It gets killed aroun 1_800 idk why. Maybe we have a problem with token truncation somewhere
+    # It gets killed aroun 1_800 idk why. Maybe we have a problem with token truncation somewhere
+    N_DATASIZE = 1_800
 
     # N_CLUSTERS_MIN = int(0.5 * N_DIMS)
     # N_CLUSTERS_MAX = 10 * N_DIMS
@@ -63,17 +64,14 @@ def create_param_tag():
     return m.hexdigest()[:40]
 
 
-def similarity_metric(a: torch.Tensor, b: torch.Tensor):
-    return torch.sum(torch.exp(torch.multiply(a, b)))
-
-
 def score_for_neuron(self, to_score: List[str], primary_layer: int,
                      score_path: List[int],
                      top_n=100, primary_cutoff_mult_factor=3,
                      BS=128,
                      embeds: Union[npt.NDArray, None] = None,
                      weighting_per_layer=None) -> List[int]:
-    raise NotImplementedError("This is not implemented yet for non mixture based")
+    raise NotImplementedError(
+        "This is not implemented yet for non mixture based")
     top_for_primary = top_n * primary_cutoff_mult_factor
     embeds, tokens_to_ds, _ = self._get_ds_metadata(
         to_score, embeds)
@@ -127,7 +125,6 @@ def get_and_prepare_save_tag(prepend: str):
 
 def get_block_base_label(i): return f'blocks.{i}'
 
-
 def get_block_out_label(i): return f'{get_block_base_label(i)}.hook_resid_post'
 
 
@@ -143,18 +140,26 @@ def forward_pass(model_lens: transformer_lens.HookedTransformer, t: str, layer: 
 
 # TODO: we should have better labeling!!
 
-def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, dataset: Dataset, layers: List[str], use_save=True) -> npt.NDArray:
-    # f_name = get_and_prepare_save_tag('dataset_embd')
-    # if os.path.exists(f_name) and use_save:
-    #     return pickle.load(open(f_name, 'rb'))
-    # TODO: more efficient way with tokenization first?
+
+def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, dataset: Dataset, layers: List[str], use_save=True) -> List[npt.NDArray]:
+
     all_finished = get_and_prepare_save_tag('all_finished_embd')
-    # TODO: check more than just this. Check shapes? Or maybe metadata tag saying everything saved/ finished
-    def mmat_file(layer: str):
-        return f'metadata/{create_param_tag()}/mmat_t_layer_total_{layer}.dat'
+
+    def mmat_file(layer: int):
+        return f'metadata/{create_param_tag()}/mmat_t_layer_total_{layer}.dat' if use_save else '/tmp/mmat_t_layer_total_{layer}.dat'
     if use_save and os.path.exists(all_finished):
         print("Loading dataset from cache")
-        return [np.memmap(mmat_file(i), dtype='float32', mode='r') for i, _ in enumerate(layers)]
+        all_layers = []
+        for i, _ in enumerate(layers):
+            all_layers.append(
+                # TODO: store n_tokens
+                # TODO: make storage class thi
+                np.memmap(mmat_file(i), dtype='float32', mode='r'))#, shape=(459325, N_DIMS)))
+        # We don't store the shape, so we need to reshape to the original shape
+        # TODO: maybe store the shape instead?
+        for i in range(len(all_layers)):
+            all_layers[i] = all_layers[i].reshape(-1, N_DIMS)
+        return all_layers
 
     all_outs = [[] for _ in layers]
     with torch.no_grad():
@@ -170,13 +175,11 @@ def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, datas
                 tens = outs[l]
                 all_outs[i] += list(tens.cpu().numpy().reshape(-1, N_DIMS))
                 del tens
-            # all_outs += out
     outs_np = [
     ]
-    print("STARTING TO NUMPY IT")
     for l, _ in enumerate(layers):
         total_n_toks = len(all_outs[l])
-        mmemap_name = mmat_file(l) if use_save else '/tmp/mmat_t_layer_total_{l}.dat'
+        mmemap_name = mmat_file(l)
         out_np = np.memmap(mmemap_name, dtype='float32',
                            mode='w+', shape=(total_n_toks, N_DIMS))
         # BS = 1_024 * 8
@@ -188,8 +191,7 @@ def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, datas
             # print("ON", i, top_idx, all_outs[l][i:top_idx])
             out_np[i:top_idx, :] = np.array(all_outs[l][i:top_idx])
         outs_np.append(out_np)
-    # print("SAVING TO Pickle... todo: ACTUALLY USE THE mmat format...")
-    print("Finished numpying")
+    print("Finished and saving to file")
     if use_save:
         f = open(all_finished, 'w')
         f.write('done')
@@ -282,26 +284,30 @@ def cutoff_lattice(lattice: List[List[List[float]]], related_cutoff=1):
     print(r[0].sum())
     return r
 
-def log_score_tokens_for_path(embd_dataset: npt.NDArray,
-                          path: List[int],
-                          score_weighting_per_layer: npt.NDArray, BS=128):
+
+def log_score_tokens_for_path(embd_dataset: List[npt.NDArray],
+                              path: List[int],
+                              score_weighting_per_layer: npt.NDArray, BS=1_024*64):
     """
     embd_dataset: The outer index corresponds to the layer, the inner index corresponds to the token
     """
     # Set the outer index to the token
-    token_per_layer = embd_dataset.swapaxes(0, 1)
-    scores = np.zeros(len(token_per_layer))
-    print(token_per_layer.shape, path)
-    assert token_per_layer.shape[1] == len(path)
+    # token_per_layer = embd_dataset.swapaxes(0, 1)
+    n_tokens = embd_dataset[0].shape[0]
+    scores = np.zeros(n_tokens)
+    assert len(embd_dataset) == len(path)
 
-    for i in range(0, token_per_layer.shape[0], BS):
-        top_idx = min(i + BS, token_per_layer.shape[0])
+    for i in range(0, n_tokens, BS):
+        if i % (BS * 100) == 0:
+            print("Scoring on", i, "of", n_tokens)
+        top_idx = min(i + BS, n_tokens)
         for layer in range(len(path)):
             local_scores = metric.predict_proba(
-                token_per_layer[i:top_idx, layer])
+                embd_dataset[layer][i:top_idx])
             local_scores = local_scores[:, path[layer]]
             # TODO: *integrate ideas of just getting overall log score*
-            scores[i:top_idx] += score_weighting_per_layer[layer] * np.log(local_scores)
+            scores[i:top_idx] += score_weighting_per_layer[layer] * \
+                np.log(local_scores)
     return scores
 
 
@@ -365,7 +371,7 @@ class Decomposer:
                 token_to_pos_original_ds.append(j)
 
         assert len(token_to_original_ds) == len(
-            token_to_pos_original_ds) == embeds.shape[1]
+            token_to_pos_original_ds) == embeds[0].shape[0]
         return embeds, token_to_original_ds, token_to_pos_original_ds
 
     def score_for_neuron(self, to_score: List[str], primary_layer: int,
@@ -390,7 +396,6 @@ class Decomposer:
 
         embeds, token_to_original_ds, _ = self._get_ds_metadata(
             to_score, embeds)
-        print("GOT EMBEDS", embeds.shape)
         log_scores = log_score_tokens_for_path(
             embd_dataset=embeds, path=score_path,
             score_weighting_per_layer=weighting_per_layer, BS=BS)

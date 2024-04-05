@@ -244,13 +244,19 @@ def restrict_to_related_vertex(lattice: List[npt.NDArray], layer: int, idx: int)
     # print(bellow[0].shape, prior[0].shape, curr[0].shape, above[0].shape, len(above))
     return bellow + prior + curr + above
 
-def top_k_dag_paths(layers: List[np.ndarray], layer: int, neuron: int, k: int):
+def top_k_dag_paths(layers: List[np.ndarray], layer: int, neuron: int, k: int, exclude_set = {}):
     r = restrict_to_related_vertex(layers, layer, neuron)
     # print(r)
     graph, source, sink, graph_layers_to_idx, node_layers_to_graph, most_pos = to_nx_graph(
         r)
+    
+    for rm_layer in exclude_set.keys():
+        for node in exclude_set[rm_layer]:
+            print("Removing", rm_layer, node, node_layers_to_graph[rm_layer][node])
+            graph.remove_node(node_layers_to_graph[rm_layer][node])
+
     X = nx.shortest_simple_paths(graph, source, sink, weight='weight')
-    # print(len(node_layers_to_graph))
+    
 
     paths = []
     for counter, path in enumerate(X):
