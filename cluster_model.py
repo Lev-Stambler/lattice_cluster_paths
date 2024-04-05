@@ -292,10 +292,10 @@ class Decomposer:
     # TODO: in params?
     # TODO: 2 params... one for lattice and one for scores
     _weight_decay = 0.9
-    _weight_decay_path_sel = 0.90
+    _weight_decay_path_sel = 0.90  # TODO: should we go back to 1 here?
     # TODO: THERE IS STILL A PROBLEM WHERE WE REALLY AREN'T LOOKING AT TOTAL CORRELATION THROUGH THINGS...
 
-    def __init__(self, model_lens, dataset: Dataset, layers: List[str], n_max_features_per_neuron=5):
+    def __init__(self, model_lens, dataset: Dataset, layers: List[str], n_max_features_per_neuron=8):
         torch.manual_seed(SEED)
         np.random.seed(SEED)
         print(f"Creating decomposer with parameter hash {create_param_tag()}")
