@@ -85,6 +85,7 @@ class PathLattice():
     def _paths_for_layer(self, layer: int):
         for i in range(layer, len(self._lattice) ):
             assert self._lattice[i] is not None, "We need the above lattice scores to be calculated first"
+        corrs_in_layer = self._corr_lattice._correlations[layer]
         pass
 
     def _path_equivalence_rule(self) -> None:
