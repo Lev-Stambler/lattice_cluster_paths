@@ -261,9 +261,9 @@ class Decomposer:
         layers = [get_block_out_label(i) for i in range(params.n_blocks)]
         self.params = params
         print(
-            f"Creating decomposer with parameter data hash {params.get_and_prepare_data_save_tag()}")
+            f"Creating decomposer with parameter data hash {params.get_and_prepare_data_save_tag('start')}")
         print(
-            f"Creating decomposer with parameter lattice hash {params.get_and_prepare_correlation_save_tag()}")
+            f"Creating decomposer with parameter lattice hash {params.get_and_prepare_correlation_save_tag('start')}")
         # TODO: cutoff in random position
 
         if params.string_size_cutoff > 0:
