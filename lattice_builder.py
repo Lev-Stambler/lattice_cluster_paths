@@ -76,17 +76,59 @@ _LayerToItems = List
 class PathLattice():
     _corr_lattice: CorrelationLattice
     _equiv_thresh = 0.5
-    _lattice: _LayerToItems[List[_PathEquivalence]]
+    _equiv_classes: _LayerToItems[List[_PathEquivalence]]
 
     def __init__(self, corr_lattice: CorrelationLattice) -> None:
         self._corr_lattice = corr_lattice
-        self._lattice = [None for i in range(len(self._corr_lattice.lattice))]
+        self._equiv_classes = [None for i in range(len(self._corr_lattice.lattice) + 1)]
+        assert self._equiv_thresh >= 0.5, "The lattice is not well defined for equiv_thresh bellow 1/2"
 
-    def _paths_for_layer(self, layer: int):
-        for i in range(layer, len(self._lattice) ):
-            assert self._lattice[i] is not None, "We need the above lattice scores to be calculated first"
-        corrs_in_layer = self._corr_lattice._correlations[layer]
-        pass
+    def _calc_paths_for_layer(self, layer: int):
+        if layer == len(self._equiv_classes):
+            n_last_items = self._corr_lattice._correlations[-1].shape[-1]
+            # We have one representative for every equivalence class
+            self._equiv_classes[-1] = np.expand_dims(np.arange(n_last_items, dtype=int), -1).tolist()
+            return self._equiv_classes[-1]
+        
+        def update_eq_classes(new_path: List[int], eq_classes: List[_PathEquivalence]):
+            in_existing = False
+            for i, c in enumerate(eq_classes):
+                for rep in c:
+                    assert len(rep) == len(new_path) # TODO: del assert
+                    n_same_path = sum([a == b
+                        for (a, b) in zip(rep, new_path)])
+                    # TODO THIS IS STRICT >=
+                    if n_same_path > self._equiv_thresh * len(rep):
+                        eq_classes[i].append(new_path)
+                        in_existing = True
+                        return eq_classes
+
+            if not in_existing:
+                eq_classes.append([new_path])
+            return eq_classes
+
+        
+        for i in range(layer, len(self._equiv_classes)):
+            assert self._equiv_classes[i] is not None, "We need the above lattice scores to be calculated first"
+        corrs = self._corr_lattice._correlations
+        corrs_in_layer = corrs[layer]
+        upstream_eq_classes = self._equiv_classes[layer + 1]
+        curr_eq_classes = []
+
+        for i, ue in enumerate(upstream_eq_classes):
+            for node, _ in enumerate(corrs_in_layer):
+                for path in ue:
+                    next_idx = path[0]
+                    has_connection = self._corr_lattice.lattice[layer][node, next_idx] > 0
+                    if has_connection:
+                        curr_eq_classes = update_eq_classes([node] + path, curr_eq_classes)
+        self._equiv_classes[layer] = curr_eq_classes
+        return curr_eq_classes
+    
+    def load(self):
+        n_layers = len(self._equiv_classes)
+        for i in reversed(range(n_layers)):
+            self._calc_paths_for_layer(i)
 
     def _path_equivalence_rule(self) -> None:
         """

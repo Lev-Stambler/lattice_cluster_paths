@@ -326,6 +326,7 @@ class Decomposer:
         return get_top_scores(self, dataset, path, layer,
                               weighting_per_layer, embds, top_n)
 
+    
 #     def scores_for_neuron(self, layer: int, neuron: int, dataset: List[str] = None, n_features_per_neuron=None, embds=None):
 #         if n_features_per_neuron is None:
 #             n_features_per_neuron = self.n_features_per_neuron
