@@ -42,7 +42,6 @@ class CorrelationLattice:
             sorted = np.flip(np.sort(layer, axis=-1), axis=-1)
             cutoff = sorted[:, self._target_degree]
             assert cutoff.shape[0] == layer.shape[0]
-            print(cutoff)
             cutoffs.append(cutoff)
         return cutoffs
 
