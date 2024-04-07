@@ -229,7 +229,7 @@ class Decomposer:
     correlation_scores: List[List[List[float]]]
     # TODO: there has to be a smarter K-search alg
     # _k_search = N_DIMS * 2 #TODO: Back
-    _k_search = 100
+    _k_search = 20
     # TODO: in params?
     # TODO: 2 params... one for lattice and one for scores
     _weight_decay = 0.9
