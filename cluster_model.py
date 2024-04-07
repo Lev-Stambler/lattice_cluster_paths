@@ -237,7 +237,7 @@ class Decomposer:
     # TODO: THERE IS STILL A PROBLEM WHERE WE REALLY AREN'T LOOKING AT TOTAL CORRELATION THROUGH THINGS...
 
     def __init__(self, params: paramslib.InterpParams,
-                 n_max_features_per_neuron=8):
+                 n_max_features_per_neuron=5):
         torch.manual_seed(params.seed)
         np.random.seed(params.seed)
 
