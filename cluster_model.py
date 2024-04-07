@@ -90,6 +90,7 @@ def get_top_scores(self, dataset: List[str], path: List[int],
     scores_reord = [scores[i] for i in top_args]
     return tokens_reord[:top_n], scores_reord[:top_n]
 
+
 def get_and_prepare_save_tag(prepend: str):
     if not os.path.exists('metadata'):
         os.mkdir('metadata')
@@ -98,6 +99,7 @@ def get_and_prepare_save_tag(prepend: str):
         json.dump(metadata_json(), open(
             f'metadata/{create_param_tag()}/metadata.json', 'w'))
     return f'metadata/{create_param_tag()}/{prepend}.pkl'
+
 
 def get_block_base_label(i): return f'blocks.{i}'
 
@@ -114,6 +116,7 @@ def forward_on_block(model, block_idx: int, data: npt.NDArray):
 def forward_pass(model_lens: transformer_lens.HookedTransformer, t: str, layer: str) -> torch.Tensor:
     with torch.no_grad():
         return model_lens.run_with_cache(t)[1][layer]
+
 
 def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, dataset: Dataset, layers: List[str], use_save=True) -> List[npt.NDArray]:
 
@@ -172,6 +175,7 @@ def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, datas
         f.close()
     return outs_np
 
+
 def cluster_model_lattice(ds: List[npt.NDArray]) -> List[List[List[float]]]:
     """
     We will take a bit of a short cut here. Rather than passing *representatives* from each centroid to find the "strength" on the following centroids,
@@ -191,7 +195,7 @@ def cluster_model_lattice(ds: List[npt.NDArray]) -> List[List[List[float]]]:
     # TODO: parameterize by N_DIMS
     probs_for_all_layers = [
         np.memmap(f'/tmp/mmat_prob_layer_{layer}.dat', dtype='float32',
-                  mode='w+', shape=(N_DIMS * 2, ds[layer].shape[0])) # * 2 as each dimension has a +1 and -1
+                  mode='w+', shape=(N_DIMS * 2, ds[layer].shape[0]))  # * 2 as each dimension has a +1 and -1
         for layer in range(len(ds))]
     for l in probs_for_all_layers:
         l[:] = 0.0
@@ -403,7 +407,8 @@ class Decomposer:
         weighting_per_layer = utils.get_weighting_for_layer(
             layer, n_blocks, weight_decay=self._weight_decay)
         weighting_per_layer[layer] = 1
-        print("WEIGHTING PER LAYER", weighting_per_layer, "WEIGHTING PER EDGE", weighting_per_edge)
+        print("WEIGHTING PER LAYER", weighting_per_layer,
+              "WEIGHTING PER EDGE", weighting_per_edge)
         paths = graph.get_feature_paths(self.lattice_scores, layer, neuron,
                                         k_search=self._k_search, n_max_features=n_features_per_neuron,
                                         weighting_per_edge=weighting_per_edge)
@@ -421,10 +426,16 @@ class Decomposer:
             scores_for_path, paths, layer, neuron)
         print("Finished for neuron", layer, neuron)
 
-    def scores_for_layer(self, layer: int, dataset: List[str] = None, embds=None):
+    def scores_for_layer(self, layer: int, dataset: List[str] = None, embds=None, n_features_per_neuron=None, check_save=True):
+        # TODO: meta tag
         # TODO: diff dem by feature
         for neuron in range(N_DIMS * 2):
-            self.scores_for_neuron(layer, neuron, dataset, embds)
+            if check_save and os.path.exists(visualization.save_path(layer, neuron)):
+                print("Already finished for layer and neuron", layer, neuron)
+                continue
+            else:
+                self.scores_for_neuron(
+                layer, neuron, dataset, embds, n_features_per_neuron=n_features_per_neuron)
 
     def scores_for_all(self, dataset: List[str] = None, embds=None):
         # TODO: check cached!!

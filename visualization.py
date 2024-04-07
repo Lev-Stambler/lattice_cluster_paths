@@ -1,6 +1,11 @@
 from typing import List, Tuple
 from circuitsvis.utils.render import render
 
+
+# TODO: use meta tage
+def save_path(layer: int, neuron: int):
+    return f"built_html/neurons/layer_{layer}_neuron_{neuron}.htm"
+
 def display_top_scores(tokens_reord, scores_for_path):
     maxes_per_score = [max(s) for s in scores_for_path]
     max_score = max(maxes_per_score)
@@ -19,11 +24,12 @@ def display_top_scores(tokens_reord, scores_for_path):
         firstDimensionLabels=None,
         secondDimensionLabels=None
     )
-    
+
     return str(html)
 
+
 def _create_webpage_for_paths_per_neuron(layer: int, neuron: int,
-                                        paths_html: List[str], paths: List[List[int]]):
+                                         paths_html: List[str], paths: List[List[int]]):
     diff_paths = []
     for (html, path) in zip(paths_html, paths):
         diff_paths.append(f"""
@@ -43,7 +49,7 @@ def _create_webpage_for_paths_per_neuron(layer: int, neuron: int,
         {joined}
         </div>
     """
-    with open(f"built_html/neurons/layer_{layer}_neuron_{neuron}.htm", "w") as f:
+    with open(save_path(layer, neuron), "w") as f:
         f.write(html)
 
 def save_display_for_neuron(scores_for_paths: List[Tuple[List, List]], paths: List[List[int]], layer: int, neuron: int):
