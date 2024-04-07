@@ -7,7 +7,7 @@ import utils
 GRAPH_SCALING_RESOLUTION = 100_000
 
 
-def _to_nx_graph(cluster_scores: List[npt.NDArray], weighting_per_edge=None) -> Tuple[nx.DiGraph, int, List[Dict[int, int]], List[Dict[int, int]]]:
+def _to_nx_graph(cluster_scores: List[npt.NDArray], fix_weighting=True, weighting_per_edge=None):
     node_idx = 0
     assert weighting_per_edge is None or len(weighting_per_edge) == len(
         cluster_scores), "Need a weight for each edge from prior layer to next"
@@ -32,16 +32,20 @@ def _to_nx_graph(cluster_scores: List[npt.NDArray], weighting_per_edge=None) -> 
             for j, c in enumerate(node_cs):
                 next_idx = layer_start_idx + n_in_layer + j
 
-                # We need all the weights to be positive but the shortest paths to be the most important
-                w = round((-1 * c *
-                           (1 if weighting_per_edge is None else weighting_per_edge[layer])
-                           + most_pos_per_layer[layer])
-                          * GRAPH_SCALING_RESOLUTION)
-                assert w >= 0, f"Weight is negative: {w}"
+                if fix_weighting:
+                    # We need all the weights to be positive but the shortest paths to be the most important
+                    w = round((-1 * c *
+                               (1 if weighting_per_edge is None else weighting_per_edge[layer])
+                               + most_pos_per_layer[layer])
+                              * GRAPH_SCALING_RESOLUTION)
+                    assert w >= 0, f"Weight is negative: {w}"
+                else:
+                    w = c
 
                 graph_idx_to_node_idx[layer + 1][next_idx] = j
                 node_idx_to_graph_idx[layer + 1][j] = next_idx
-                G.add_edge(node_idx, next_idx, weight=w)
+                if c > 0:
+                    G.add_edge(node_idx, next_idx, weight=w)
             node_idx += 1
 
     sink = n_clusters
