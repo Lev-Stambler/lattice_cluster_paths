@@ -63,6 +63,7 @@ def _to_nx_graph(cluster_scores: List[npt.NDArray], fix_weighting=True, weightin
 
 def top_k_dag_paths(layers: List[npt.NDArray], layer: int, neuron: int, k: int,
                     weighting_per_edge: List[float] = None, corr_cutoff = 0.01, exclude_set={}):
+    # TODO: we no longer have to remake these graphs. One and done
     r = utils.restrict_to_related_vertex(layers, layer, neuron)
     graph, source, sink, graph_layers_to_idx, \
         node_layers_to_graph, most_pos_per_layer = _to_nx_graph(
@@ -74,23 +75,25 @@ def top_k_dag_paths(layers: List[npt.NDArray], layer: int, neuron: int, k: int,
                   node_layers_to_graph[rm_layer][node])
             graph.remove_node(node_layers_to_graph[rm_layer][node])
 
-    X = nx.shortest_simple_paths(graph, source, sink, weight='weight')
+    node_start  = node_layers_to_graph[layer][0] # Because we select for only 1
+    X = nx.shortest_simple_paths(graph, node_start, sink, weight='weight')
 
     paths = []
     for counter, path in enumerate(X):
-        path_no_sink_no_source = path[1:-1]
+        path_no_sink = path[:-1]
         # print(path_no_sink, path)
         #  TODO: CANNOT GO BACKWARDS
         # print(path, path_no_sink_no_source)
-        path_node_idx = [graph_layers_to_idx[i][node]
-                         for i, node in enumerate(path_no_sink_no_source)]
-        assert len(path_node_idx) == len(layers) + 1
-        path_node_idx[layer] = neuron
+        # print("PATH NO SINK", path_no_sink)
+        path_node_idx = [graph_layers_to_idx[i + layer][node]
+                         for i, node in enumerate(path_no_sink)]
+        assert len(path_node_idx) == len(layers) + 1 - layer
+        path_node_idx[0] = neuron
 
         recovered_weight = sum([
-            -1 * weighting_per_edge[i] * (graph[path_no_sink_no_source[i]][path_no_sink_no_source[i + 1]]['weight'] / GRAPH_SCALING_RESOLUTION \
+            -1 * weighting_per_edge[i] * (graph[path_no_sink[i]][path_no_sink[i + 1]]['weight'] / GRAPH_SCALING_RESOLUTION \
                 - most_pos_per_layer[i]) 
-            for i in range(0, len(path_no_sink_no_source) - 1)])  # Remove source and sink
+            for i in range(0, len(path_no_sink) - 1)])  
         
         paths.append((path_node_idx, recovered_weight))
         print(paths[-1])
@@ -111,14 +114,14 @@ def get_feature_paths(lattice, layer: int, neuron: int, k_search=20,
     print(f"Got top {k_search} paths")
     paths = [p[0] for p in searched_paths]
 
-    n_layers = len(lattice)
+    n_layers_in_path = len(lattice) - layer
 
     def cluster_similar_paths():
         # Get a pairwise "similarity" between the paths
         sims = np.zeros((k_search, k_search))
         for i in range(k_search):
             for j in range(k_search):
-                for l in range(n_layers):
+                for l in range(n_layers_in_path):
                     if paths[i][l] == paths[j][l]:
                         sims[i, j] += 1
         # Now we can employ a greedy-type algorithm
@@ -127,7 +130,7 @@ def get_feature_paths(lattice, layer: int, neuron: int, k_search=20,
         # A list of whether a path has been clustered
         clustered = np.zeros(k_search) == 1
 
-        diff_cutoff = n_layers - 1
+        diff_cutoff = n_layers_in_path - 1
 
         def start_over():
             nonlocal curr_idx, curr_cluster
@@ -150,7 +153,7 @@ def get_feature_paths(lattice, layer: int, neuron: int, k_search=20,
                 diff_from_all = True
                 for c in clusters:
                     rep = c[0]
-                    if not clustered[i] and sims[rep, i] <= n_layers - diff_cutoff:
+                    if not clustered[i] and sims[rep, i] <= n_layers_in_path - diff_cutoff:
                         pass
                     else:
                         diff_from_all = False

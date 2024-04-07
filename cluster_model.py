@@ -25,6 +25,7 @@ def get_top_scores(self, dataset: List[str], path: List[int],
     print(weighting_per_layer)
     scores = self.score(
         dataset,
+        layer=layer,
         score_path=score_path,
         weighting_per_layer=weighting_per_layer,
         use_log_scores=True,
@@ -181,7 +182,8 @@ def cutoff_lattice(lattice: List[List[List[float]]], related_cutoff=1):
 # TODO: this is no longer log?
 def log_score_tokens_for_path(embd_dataset: List[npt.NDArray],
                               path: List[int],
-                              score_weighting_per_layer: npt.NDArray, BS=1_024*32):
+                              layer_start: int,
+                              score_weighting_per_layer: npt.NDArray, BS=1_024*64):
     """
     embd_dataset: The outer index corresponds to the layer, the inner index corresponds to the token
     """
@@ -189,22 +191,23 @@ def log_score_tokens_for_path(embd_dataset: List[npt.NDArray],
     # token_per_layer = embd_dataset.swapaxes(0, 1)
     n_tokens = embd_dataset[0].shape[0]
     scores = np.ones(n_tokens)
-    assert len(embd_dataset) == len(path)
+    assert len(embd_dataset) == len(path) + layer_start
 
     for i in range(0, n_tokens, BS):
         # if i % (BS * 10) == 0:
         #     print("Scoring on", i, "of", n_tokens)
         top_idx = min(i + BS, n_tokens)
-        for layer in range(len(path)):
+        for layer_offset in range(len(path)):
+            layer = layer_offset + layer_start
             local_scores = kernel.feature_prob(
-                embd_dataset[layer][i:top_idx], path[layer])
+                embd_dataset[layer][i:top_idx], path[layer_offset])
 
             # Make sure that we never multiply by a negative number
             # Negative just means that we are anti-correlated
             local_scores = local_scores * (local_scores > 0.0)
-            scores[i:top_idx] *= local_scores ** score_weighting_per_layer[layer]
+            scores[i:top_idx] *= local_scores ** score_weighting_per_layer[layer_offset]
             # local_scores
-    scores = np.abs(scores)  # Make sure that we are always positive
+    scores = scores  # Make sure that we are always positive
     return scores
 
 
@@ -291,7 +294,7 @@ class Decomposer:
             token_to_pos_original_ds) == embeds[0].shape[0]
         return embeds, token_to_original_ds, token_to_pos_original_ds
 
-    def score(self, to_score: List[str], score_path: List[int], embeds: Union[npt.NDArray, None] = None, weighting_per_layer=None, use_log_scores=True) -> List[List[float]]:
+    def score(self, to_score: List[str], layer: int, score_path: List[int], embeds: Union[npt.NDArray, None] = None, weighting_per_layer=None, use_log_scores=True) -> List[List[float]]:
         """
         Get the scores for the tokens in the dataset
         """
@@ -302,7 +305,7 @@ class Decomposer:
             to_score, embeds)
         log_scores = log_score_tokens_for_path(
             embd_dataset=embeds, path=score_path,
-            score_weighting_per_layer=weighting_per_layer)
+            score_weighting_per_layer=weighting_per_layer, layer_start=layer)
         item_to_scores = {}
         # return log_scores
         # TODO: BATCHING!
@@ -340,8 +343,9 @@ class Decomposer:
         weighting_per_edge = np.concatenate((weighting_per_layer_path_sel[:layer],
                                             weighting_per_layer_path_sel[layer + 1:]))
 
+		# We always "start" from the current layer"
         weighting_per_layer = utils.get_weighting_for_layer(
-            layer, n_blocks, weight_decay=self._weight_decay)
+            0, n_blocks - layer, weight_decay=self._weight_decay)
         weighting_per_layer[layer] = 1
         print("WEIGHTING PER LAYER", weighting_per_layer,
               "WEIGHTING PER EDGE", weighting_per_edge)
