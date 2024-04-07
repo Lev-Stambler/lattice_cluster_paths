@@ -40,19 +40,8 @@ def get_top_scores(self, dataset: List[str], path: List[int],
     scores_reord = [scores[i] for i in top_args]
     return tokens_reord[:top_n], scores_reord[:top_n]
 
-
-# def get_and_prepare_save_tag(prepend: str):
-#     if not os.path.exists('metadata'):
-#         os.mkdir('metadata')
-#     if not os.path.exists(f'metadata/{create_param_tag()}'):
-#         os.mkdir(f'metadata/{create_param_tag()}')
-#         json.dump(metadata_json(), open(
-#             f'metadata/{create_param_tag()}/metadata.json', 'w'))
-#     return f'metadata/{create_param_tag()}/{prepend}.pkl'
-
-
+# TODO: by different model parameterize?
 def get_block_base_label(i): return f'blocks.{i}'
-
 
 def get_block_out_label(i): return f'{get_block_base_label(i)}.hook_resid_post'
 
@@ -238,7 +227,7 @@ def get_dataset(name: str):
 
 
 class Decomposer:
-    lattice_scores: List[List[List[float]]]
+    correlation_scores: List[List[List[float]]]
     # TODO: there has to be a smarter K-search alg
     # _k_search = N_DIMS * 2 #TODO: Back
     _k_search = 100
@@ -273,7 +262,7 @@ class Decomposer:
             self.dataset = dataset
         print("Created dataset")
         self.layers = layers
-        self.lattice_scores = None
+        self.correlation_scores = None
         self.labs = [get_block_out_label(i) for i in range(params.n_blocks)]
         self.ds_emb = get_layers_emb_dataset(
             self.model_lens, self.dataset, self.labs, params=self.params, use_save=True)
@@ -281,7 +270,7 @@ class Decomposer:
         print("Got embeddings")
 
     def load(self):
-        self.lattice_scores = cluster_model_lattice(
+        self.correlation_scores = cluster_model_lattice(
             self.ds_emb, params=self.params)
 
     def _get_ds_metadata(self, ds: List[str], embeds: npt.NDArray = None):
@@ -356,7 +345,7 @@ class Decomposer:
         weighting_per_layer[layer] = 1
         print("WEIGHTING PER LAYER", weighting_per_layer,
               "WEIGHTING PER EDGE", weighting_per_edge)
-        paths = graph.get_feature_paths(self.lattice_scores, layer, neuron,
+        paths = graph.get_feature_paths(self.correlation_scores, layer, neuron,
                                         k_search=self._k_search, n_max_features=n_features_per_neuron,
                                         weighting_per_edge=weighting_per_edge)
         scores_for_path = []
