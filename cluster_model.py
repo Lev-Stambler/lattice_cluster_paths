@@ -181,7 +181,7 @@ def cutoff_lattice(lattice: List[List[List[float]]], related_cutoff=1):
 # TODO: this is no longer log?
 def log_score_tokens_for_path(embd_dataset: List[npt.NDArray],
                               path: List[int],
-                              score_weighting_per_layer: npt.NDArray, BS=1_024*2):
+                              score_weighting_per_layer: npt.NDArray, BS=1_024*32):
     """
     embd_dataset: The outer index corresponds to the layer, the inner index corresponds to the token
     """
@@ -326,53 +326,53 @@ class Decomposer:
                               weighting_per_layer, embds, top_n)
 
     
-#     def scores_for_neuron(self, layer: int, neuron: int, dataset: List[str] = None, n_features_per_neuron=None, embds=None):
-#         if n_features_per_neuron is None:
-#             n_features_per_neuron = self.n_features_per_neuron
-#         if dataset is None:
-#             dataset = self.dataset
-#             embds = self.ds_emb
+    def scores_for_neuron(self, layer: int, neuron: int, dataset: List[str] = None, n_features_per_neuron=None, embds=None):
+        if n_features_per_neuron is None:
+            n_features_per_neuron = self.n_features_per_neuron
+        if dataset is None:
+            dataset = self.dataset
+            embds = self.ds_emb
 
-#         n_blocks = len(self.layers)
+        n_blocks = len(self.layers)
 
-#         weighting_per_layer_path_sel = utils.get_weighting_for_layer(
-#             layer, n_blocks, weight_decay=self._weight_decay_path_sel)
-#         weighting_per_edge = np.concatenate((weighting_per_layer_path_sel[:layer],
-#                                             weighting_per_layer_path_sel[layer + 1:]))
+        weighting_per_layer_path_sel = utils.get_weighting_for_layer(
+            layer, n_blocks, weight_decay=self._weight_decay_path_sel)
+        weighting_per_edge = np.concatenate((weighting_per_layer_path_sel[:layer],
+                                            weighting_per_layer_path_sel[layer + 1:]))
 
-#         weighting_per_layer = utils.get_weighting_for_layer(
-#             layer, n_blocks, weight_decay=self._weight_decay)
-#         weighting_per_layer[layer] = 1
-#         print("WEIGHTING PER LAYER", weighting_per_layer,
-#               "WEIGHTING PER EDGE", weighting_per_edge)
-#         paths = graph.get_feature_paths(self.correlation_scores, layer, neuron,
-#                                         k_search=self._k_search, n_max_features=n_features_per_neuron,
-#                                         weighting_per_edge=weighting_per_edge)
-#         scores_for_path = []
-#         print("PATHS", paths)
-#         for i, (path, _path_score) in enumerate(paths):
-#             print("LOOKING AT PATH", path, i + 1, "out of", len(paths))
-#             t, s = self.get_top_scores(
-#                 dataset, path, layer, weighting_per_layer, embds)
-#             scores_for_path.append((t, s))
-#             print("Done with path", i + 1, "out of", len(paths))
+        weighting_per_layer = utils.get_weighting_for_layer(
+            layer, n_blocks, weight_decay=self._weight_decay)
+        weighting_per_layer[layer] = 1
+        print("WEIGHTING PER LAYER", weighting_per_layer,
+              "WEIGHTING PER EDGE", weighting_per_edge)
+        paths = graph.get_feature_paths(self.correlation_scores, layer, neuron,
+                                        k_search=self._k_search, n_max_features=n_features_per_neuron,
+                                        weighting_per_edge=weighting_per_edge)
+        scores_for_path = []
+        print("PATHS", paths)
+        for i, (path, _path_score) in enumerate(paths):
+            print("LOOKING AT PATH", path, i + 1, "out of", len(paths))
+            t, s = self.get_top_scores(
+                dataset, path, layer, weighting_per_layer, embds)
+            scores_for_path.append((t, s))
+            print("Done with path", i + 1, "out of", len(paths))
 
-#             # TODO: maybe save json instead?
-#         visualization.save_display_for_neuron(
-#             scores_for_path, paths, layer, neuron)
-#         print("Finished for neuron", layer, neuron)
+            # TODO: maybe save json instead?
+        visualization.save_display_for_neuron(
+            scores_for_path, paths, layer, neuron)
+        print("Finished for neuron", layer, neuron)
 
-#     def scores_for_layer(self, layer: int, dataset: List[str] = None, embds=None, n_features_per_neuron=None, check_save=True):
-#         # TODO: meta tag
-#         # TODO: diff dem by feature
-#         for neuron in range(self.params.model_n_dims * 2):
-#             if check_save and os.path.exists(visualization.save_path(layer, neuron)):
-#                 print(
-#                     f"Already finished for layer {layer} and neuron {neuron}")
-#                 continue
-#             else:
-#                 self.scores_for_neuron(
-#                     layer, neuron, dataset, embds=embds, n_features_per_neuron=n_features_per_neuron)
+    def scores_for_layer(self, layer: int, dataset: List[str] = None, embds=None, n_features_per_neuron=None, check_save=True):
+        # TODO: meta tag
+        # TODO: diff dem by feature
+        for neuron in range(self.params.model_n_dims * 2):
+            if check_save and os.path.exists(visualization.save_path(layer, neuron)):
+                print(
+                    f"Already finished for layer {layer} and neuron {neuron}")
+                continue
+            else:
+                self.scores_for_neuron(
+                    layer, neuron, dataset, embds=embds, n_features_per_neuron=n_features_per_neuron)
 
 #     def scores_for_all(self, dataset: List[str] = None, embds=None):
 #         # TODO: check cached!!

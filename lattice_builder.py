@@ -25,7 +25,7 @@ class CorrelationLattice:
     lattice: List[npt.NDArray[2]]
 
     # TODO: variable degree!!!
-    def __init__(self, correlations: List[npt.NDArray], target_degree=8) -> None:
+    def __init__(self, correlations: List[npt.NDArray], target_degree=4) -> None:
         self._correlations = correlations
         self._target_degree = target_degree
         self._corr_cutoffs = self._get_corr_cutoff()
@@ -83,10 +83,10 @@ class PathLattice():
         assert self._equiv_thresh >= 0.5, "The lattice is not well defined for equiv_thresh bellow 1/2"
 
     def _calc_paths_for_layer(self, layer: int):
-        if layer == len(self._equiv_classes):
+        if layer == len(self._equiv_classes) - 1:
             n_last_items = self._corr_lattice._correlations[-1].shape[-1]
             # We have one representative for every equivalence class
-            self._equiv_classes[-1] = np.expand_dims(np.arange(n_last_items, dtype=int), -1).tolist()
+            self._equiv_classes[-1] = np.expand_dims(np.expand_dims(np.arange(n_last_items, dtype=int), -1), axis=-1).tolist()
             return self._equiv_classes[-1]
         
         def update_eq_classes(new_path: List[int], eq_classes: List[_PathEquivalence]):
@@ -107,7 +107,8 @@ class PathLattice():
             return eq_classes
 
         
-        for i in range(layer, len(self._equiv_classes)):
+        print(f"Starting to calc number of equivalence classes for layer {layer}")
+        for i in range(layer + 1, len(self._equiv_classes)):
             assert self._equiv_classes[i] is not None, "We need the above lattice scores to be calculated first"
         corrs = self._corr_lattice._correlations
         corrs_in_layer = corrs[layer]
@@ -115,6 +116,7 @@ class PathLattice():
         curr_eq_classes = []
 
         for i, ue in enumerate(upstream_eq_classes):
+            print("On upstream eq class", i)
             for node, _ in enumerate(corrs_in_layer):
                 for path in ue:
                     next_idx = path[0]
@@ -122,6 +124,7 @@ class PathLattice():
                     if has_connection:
                         curr_eq_classes = update_eq_classes([node] + path, curr_eq_classes)
         self._equiv_classes[layer] = curr_eq_classes
+        print(f"Number of eq classes for layer {layer} is {len(self._equiv_classes[layer])}")
         return curr_eq_classes
     
     def load(self):

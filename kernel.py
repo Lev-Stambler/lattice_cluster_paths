@@ -44,10 +44,9 @@ def feature_prob(x: npt.NDArray, feature_idx: int, kernel_width=0.01):
     x = _check_size(x)
     v = -1 if feature_idx % 2 == 1 else 1
     inner = np.zeros((1, 1, x.shape[-1]))
-    inner[0, feature_idx] = 1
+    inner[0, 0, feature_idx] = 1
     
-    r = kernel(x, inner, kernel_width)[:, 0, :]
-    print("RET", r.shape)
+    r = kernel(x, inner, kernel_width)[:, 0]
     return r
 
 
