@@ -3,6 +3,8 @@ import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 from scipy.stats import ortho_group
 
+_kernel_feat = None
+
 def _check_size(x):
     if len(x.shape) == 2:
         # (batch size, d) --> (bs, 1, d)
@@ -38,15 +40,31 @@ def _exp_cos_kernel(x, features, kernel_width):
 def _inner_product(x, features, kernel_width=None):
     return (features @ np.swapaxes(x, -1, -2)).squeeze(axis=-1)
 
+def make_kernel_feat(n_dims: int):
+    global _kernel_feat
+    if _kernel_feat is not None:
+        return _kernel_feat
+
+    features = np.eye(n_dims)
+    features = np.repeat(features, 2, axis=-1)
+    features[:, 1::2] *= -1
+    features = features.T
+    # features = ortho_group.rvs(n_dims) # TODO: WE NEED TO SAVE THIS IF WE USE THIS
+    features = np.expand_dims(features, axis=0)
+    # assert x.shape[2] == features.shape[2]
+    _kernel_feat = features
+    return features
 
 def feature_prob(x: npt.NDArray, feature_idx: int, kernel_width=0.01):
     kernel = _inner_product
     x = _check_size(x)
-    v = -1 if feature_idx % 2 == 1 else 1
-    inner = np.zeros((1, 1, x.shape[-1]))
-    inner[0, 0, feature_idx] = 1
+    kern = make_kernel_feat(x.shape[-1])
+
+    # v = -1 if feature_idx % 2 == 1 else 1
+    # inner = np.zeros((1, 1, x.shape[-1] * 2))
+    # inner[0, 0, feature_idx] = 1
     
-    r = kernel(x, inner, kernel_width)[:, 0]
+    r = kernel(x, kern[:, feature_idx, :], kernel_width)[:, 0]
     return r
 
 
@@ -57,13 +75,7 @@ def predict_proba(x: npt.NDArray, batch_size=-1, kernel_width=0.01):
 
     x = _check_size(x)
     n_dims = x.shape[-1]
-    features = np.eye(n_dims)
-    features = np.repeat(features, 2, axis=-1)
-    features[:, 1::2] *= -1
-    features = features.T
-    # features = ortho_group.rvs(n_dims) # TODO: WE NEED TO SAVE THIS IF WE USE THIS
-    features = np.expand_dims(features, axis=0)
-    assert x.shape[2] == features.shape[2]
+    features = make_kernel_feat(n_dims)
 
     if batch_size > 0:
         out = np.zeros((x.shape[0], features.shape[1]))

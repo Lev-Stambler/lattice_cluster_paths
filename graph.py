@@ -7,7 +7,7 @@ import utils
 GRAPH_SCALING_RESOLUTION = 100_000
 
 
-def _to_nx_graph(cluster_scores: List[npt.NDArray], fix_weighting=True, weighting_per_edge=None):
+def _to_nx_graph(cluster_scores: List[npt.NDArray], fix_weighting=True, weighting_per_edge=None, corr_cutoff=None):
     node_idx = 0
     assert weighting_per_edge is None or len(weighting_per_edge) == len(
         cluster_scores), "Need a weight for each edge from prior layer to next"
@@ -44,7 +44,7 @@ def _to_nx_graph(cluster_scores: List[npt.NDArray], fix_weighting=True, weightin
 
                 graph_idx_to_node_idx[layer + 1][next_idx] = j
                 node_idx_to_graph_idx[layer + 1][j] = next_idx
-                if c > 0:
+                if w > 0 and (corr_cutoff is None or c > corr_cutoff):
                     G.add_edge(node_idx, next_idx, weight=w)
             node_idx += 1
 
@@ -62,11 +62,11 @@ def _to_nx_graph(cluster_scores: List[npt.NDArray], fix_weighting=True, weightin
 
 
 def top_k_dag_paths(layers: List[npt.NDArray], layer: int, neuron: int, k: int,
-                    weighting_per_edge: List[float] = None, exclude_set={}):
+                    weighting_per_edge: List[float] = None, corr_cutoff = 0.1, exclude_set={}):
     r = utils.restrict_to_related_vertex(layers, layer, neuron)
     graph, source, sink, graph_layers_to_idx, \
         node_layers_to_graph, most_pos_per_layer = _to_nx_graph(
-            r, weighting_per_edge=weighting_per_edge)
+            r, weighting_per_edge=weighting_per_edge, corr_cutoff=corr_cutoff)
 
     for rm_layer in exclude_set.keys():
         for node in exclude_set[rm_layer]:
