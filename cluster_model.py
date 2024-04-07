@@ -431,11 +431,11 @@ class Decomposer:
         # TODO: diff dem by feature
         for neuron in range(N_DIMS * 2):
             if check_save and os.path.exists(visualization.save_path(layer, neuron)):
-                print("Already finished for layer and neuron", layer, neuron)
+                print(f"Already finished for layer {layer} and neuron {neuron}")
                 continue
             else:
                 self.scores_for_neuron(
-                layer, neuron, dataset, embds, n_features_per_neuron=n_features_per_neuron)
+                layer, neuron, dataset, embds=embds, n_features_per_neuron=n_features_per_neuron)
 
     def scores_for_all(self, dataset: List[str] = None, embds=None):
         # TODO: check cached!!
