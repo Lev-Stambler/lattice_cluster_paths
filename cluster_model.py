@@ -7,64 +7,14 @@ import numpy.typing as npt
 import torch
 import transformer_lens
 import kernel
-import hashlib
-import json
+import params as paramslib
 import utils
 import visualization
 import graph
 
-# MixtureModel = KMeansMixture
-# Use RBF Kernel https://en.wikipedia.org/wiki/Radial_basis_function_kernel
+from params import InterpParams, LatticeParams
 
 DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-# DEFAULT_DEVICE = 'cpu'
-
-# TODO: separate PARAMS file?
-MODEL_NAME = 'EleutherAI/pythia-70m'
-DATASET_NAME = 'NeelNanda/pile-10k'
-MIXTURE_MODEL_TYPE = "KMenas"
-
-N_DIMS = 512
-SEED = 69_420
-
-DEBUG = False
-
-if DEBUG:
-    N_DATASIZE = 200
-    N_CLUSTERS_MIN = 20
-    N_CLUSTERS_MAX = 21
-    N_BLOCKS = 6
-    STRING_SIZE_CUTOFF = 200
-else:
-    # It gets killed aroun 1_800 idk why. Maybe we have a problem with token truncation somewhere
-    N_DATASIZE = 1_800
-
-    # N_CLUSTERS_MIN = int(0.5 * N_DIMS)
-    # N_CLUSTERS_MAX = 10 * N_DIMS
-    # TODO: DEL ME
-    N_CLUSTERS_MIN = N_DIMS
-    N_CLUSTERS_MAX = N_DIMS + 1
-    N_BLOCKS = 6
-    STRING_SIZE_CUTOFF = 1_200
-
-
-def metadata_json():
-    return {
-        'SEED': SEED,
-        'MIXTURE_MODEL_TYPE': MIXTURE_MODEL_TYPE,
-        'N_DATASIZE': N_DATASIZE,
-        'N_CLUSTERS_MIN': N_CLUSTERS_MIN,
-        'N_CLUSTERS_MAX': N_CLUSTERS_MAX,
-        'N_BLOCKS': N_BLOCKS,
-        'N_STRING_SIZE_CUTOFF': STRING_SIZE_CUTOFF
-    }
-
-
-def create_param_tag():
-    m = hashlib.sha256()
-    m.update(json.dumps(metadata_json()).encode('utf-8'))
-    return m.hexdigest()[:40]
-
 
 def get_top_scores(self, dataset: List[str], path: List[int],
                    layer: int, weighting_per_layer, embds=None, top_n=100):
@@ -91,14 +41,14 @@ def get_top_scores(self, dataset: List[str], path: List[int],
     return tokens_reord[:top_n], scores_reord[:top_n]
 
 
-def get_and_prepare_save_tag(prepend: str):
-    if not os.path.exists('metadata'):
-        os.mkdir('metadata')
-    if not os.path.exists(f'metadata/{create_param_tag()}'):
-        os.mkdir(f'metadata/{create_param_tag()}')
-        json.dump(metadata_json(), open(
-            f'metadata/{create_param_tag()}/metadata.json', 'w'))
-    return f'metadata/{create_param_tag()}/{prepend}.pkl'
+# def get_and_prepare_save_tag(prepend: str):
+#     if not os.path.exists('metadata'):
+#         os.mkdir('metadata')
+#     if not os.path.exists(f'metadata/{create_param_tag()}'):
+#         os.mkdir(f'metadata/{create_param_tag()}')
+#         json.dump(metadata_json(), open(
+#             f'metadata/{create_param_tag()}/metadata.json', 'w'))
+#     return f'metadata/{create_param_tag()}/{prepend}.pkl'
 
 
 def get_block_base_label(i): return f'blocks.{i}'
@@ -118,24 +68,23 @@ def forward_pass(model_lens: transformer_lens.HookedTransformer, t: str, layer: 
         return model_lens.run_with_cache(t)[1][layer]
 
 
-def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, dataset: Dataset, layers: List[str], use_save=True) -> List[npt.NDArray]:
+def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, dataset: Dataset, layers: List[str], params: paramslib.InterpParams, use_save=True) -> List[npt.NDArray]:
 
-    all_finished = get_and_prepare_save_tag('all_finished_embd')
+    all_finished = params.get_and_prepare_data_save_tag('all_finished_embd')
 
     def mmat_file(layer: int):
-        return f'metadata/{create_param_tag()}/mmat_t_layer_total_{layer}.dat' if use_save else '/tmp/mmat_t_layer_total_{layer}.dat'
+        return params.get_and_prepare_data_save_tag(f'mmat_t_layer_total_{layer}.dat') \
+            if use_save else f'/tmp/mmat_t_layer_total_{layer}.dat'
     if use_save and os.path.exists(all_finished):
         print("Loading dataset from cache")
         all_layers = []
         for i, _ in enumerate(layers):
             all_layers.append(
-                # TODO: store n_tokens
-                # TODO: make storage class thi
-                np.memmap(mmat_file(i), dtype='float32', mode='r'))  # , shape=(459325, N_DIMS)))
+                np.memmap(mmat_file(i), dtype='float32', mode='r'))
         # We don't store the shape, so we need to reshape to the original shape
         # TODO: maybe store the shape instead?
         for i in range(len(all_layers)):
-            all_layers[i] = all_layers[i].reshape(-1, N_DIMS)
+            all_layers[i] = all_layers[i].reshape(-1, params.model_n_dims)
         return all_layers
 
     all_outs = [[] for _ in layers]
@@ -150,7 +99,7 @@ def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, datas
             outs = model_lens.run_with_cache(d)[1]
             for i, l in enumerate(layers):
                 tens = outs[l]
-                all_outs[i] += list(tens.cpu().numpy().reshape(-1, N_DIMS))
+                all_outs[i] += list(tens.cpu().numpy().reshape(-1, params.model_n_dims))
                 del tens
     outs_np = [
     ]
@@ -158,7 +107,7 @@ def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, datas
         total_n_toks = len(all_outs[l])
         mmemap_name = mmat_file(l)
         out_np = np.memmap(mmemap_name, dtype='float32',
-                           mode='w+', shape=(total_n_toks, N_DIMS))
+                           mode='w+', shape=(total_n_toks, params.model_n_dims))
         # BS = 1_024 * 8
         BS = 8
         for i in range(0, total_n_toks, BS):
@@ -176,14 +125,14 @@ def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, datas
     return outs_np
 
 
-def cluster_model_lattice(ds: List[npt.NDArray]) -> List[List[List[float]]]:
+def cluster_model_lattice(ds: List[npt.NDArray], params: paramslib.InterpParams) -> List[List[List[float]]]:
     """
     We will take a bit of a short cut here. Rather than passing *representatives* from each centroid to find the "strength" on the following centroids,
     we will pass the *center* of each centroid to the next layer. This is a simplification, but it should be a good starting point and quite a bit faster.
 
     distance_cutoff: If the distance between two centroids is greater than this, we will not consider them to be connected.
     """
-    save_name = get_and_prepare_save_tag('cluster_scores')
+    save_name = params.get_and_prepare_correlation_save_tag('cluster_scores')
     if os.path.exists(save_name):
         print("Loading cluster scores from cache")
         r = pickle.load(open(save_name, 'rb'))
@@ -195,14 +144,14 @@ def cluster_model_lattice(ds: List[npt.NDArray]) -> List[List[List[float]]]:
     # TODO: parameterize by N_DIMS
     probs_for_all_layers = [
         np.memmap(f'/tmp/mmat_prob_layer_{layer}.dat', dtype='float32',
-                  mode='w+', shape=(N_DIMS * 2, ds[layer].shape[0]))  # * 2 as each dimension has a +1 and -1
+                  mode='w+', shape=(params.model_n_dims * 2, ds[layer].shape[0]))  # * 2 as each dimension has a +1 and -1
         for layer in range(len(ds))]
     for l in probs_for_all_layers:
         l[:] = 0.0
     print("Set all initial to 0")
 
     # TODO: we might want to batch this...
-    for i in range(N_BLOCKS):
+    for i in range(params.n_blocks):
         ds_mmep = np.memmap(
             f'/tmp/mmat_ds_{i}.dat', dtype='float32', mode='w+', shape=ds[i].shape)
         print("Trying to set dataset for layer", i)
@@ -299,35 +248,46 @@ class Decomposer:
     _weight_decay_path_sel = 0.90  # TODO: should we go back to 1 here?
     # TODO: THERE IS STILL A PROBLEM WHERE WE REALLY AREN'T LOOKING AT TOTAL CORRELATION THROUGH THINGS...
 
-    def __init__(self, model_lens, dataset: Dataset, layers: List[str], n_max_features_per_neuron=8):
-        torch.manual_seed(SEED)
-        np.random.seed(SEED)
-        print(f"Creating decomposer with parameter hash {create_param_tag()}")
-        self.model_lens = model_lens
+    def __init__(self, params: paramslib.InterpParams,
+                 n_max_features_per_neuron=8):
+        torch.manual_seed(params.seed)
+        np.random.seed(params.seed)
+
+        ds = get_dataset(params.dataset_name)
+        model, _ = get_transformer(params.model_name)
+        self.model_lens = model
+        shuffled = ds.shuffle(seed=params.seed)['train'][:params.n_datasize]['text']
+        dataset = shuffled
+        layers = [get_block_out_label(i) for i in range(params.n_blocks)]
+        self.params = params
+        print(
+            f"Creating decomposer with parameter data hash {params.get_and_prepare_data_save_tag()}")
+        print(
+            f"Creating decomposer with parameter lattice hash {params.get_and_prepare_correlation_save_tag()}")
         # TODO: cutoff in random position
 
-        if STRING_SIZE_CUTOFF > 0:
+        if params.string_size_cutoff > 0:
             self.dataset = [utils.get_random_cutoff(
-                d, STRING_SIZE_CUTOFF) for d in dataset]
+                d, params.string_size_cutoff) for d in dataset]
         else:
             self.dataset = dataset
         print("Created dataset")
         self.layers = layers
         self.lattice_scores = None
-        self.labs = [get_block_out_label(i) for i in range(N_BLOCKS)]
+        self.labs = [get_block_out_label(i) for i in range(params.n_blocks)]
         self.ds_emb = get_layers_emb_dataset(
-            self.model_lens, self.dataset, self.labs, use_save=True)
+            self.model_lens, self.dataset, self.labs, params=self.params, use_save=True)
         self.n_features_per_neuron = n_max_features_per_neuron
         print("Got embeddings")
 
     def load(self):
         self.lattice_scores = cluster_model_lattice(
-            self.ds_emb)
+            self.ds_emb, params=self.params)
 
     def _get_ds_metadata(self, ds: List[str], embeds: npt.NDArray = None):
         if embeds is None:
             embeds = get_layers_emb_dataset(
-                self.model_lens, ds, self.layers, use_save=False)
+                self.model_lens, ds, self.layers, params=self.params, use_save=False)
         token_to_original_ds = []
         token_to_pos_original_ds = []
 
@@ -343,25 +303,12 @@ class Decomposer:
             token_to_pos_original_ds) == embeds[0].shape[0]
         return embeds, token_to_original_ds, token_to_pos_original_ds
 
-    # def score_for_neuron(self, to_score: List[str], primary_layer: int,
-    #                      score_path: List[int],
-    #                      top_n=100, primary_cutoff_factor=3,
-    #                      BS=1,
-    #                      embeds: Union[torch.Tensor, None] = None,
-    #                      weighting_per_layer=None) -> List[int]:
-    #     """
-    #     """
-    #     return score_for_neuron(self, to_score, primary_layer, score_path,
-    #                             top_n=top_n, primary_cutoff_mult_factor=primary_cutoff_factor,
-    #                             BS=BS,
-    #                             embeds=embeds, weighting_per_layer=weighting_per_layer)
-
     def score(self, to_score: List[str], score_path: List[int], embeds: Union[npt.NDArray, None] = None, weighting_per_layer=None, use_log_scores=True) -> List[List[float]]:
         """
         Get the scores for the tokens in the dataset
         """
         if weighting_per_layer is None:
-            weighting_per_layer = np.ones(N_BLOCKS)
+            weighting_per_layer = np.ones(self.params.n_blocks)
 
         embeds, token_to_original_ds, _ = self._get_ds_metadata(
             to_score, embeds)
@@ -429,17 +376,18 @@ class Decomposer:
     def scores_for_layer(self, layer: int, dataset: List[str] = None, embds=None, n_features_per_neuron=None, check_save=True):
         # TODO: meta tag
         # TODO: diff dem by feature
-        for neuron in range(N_DIMS * 2):
+        for neuron in range(self.params.model_n_dims * 2):
             if check_save and os.path.exists(visualization.save_path(layer, neuron)):
-                print(f"Already finished for layer {layer} and neuron {neuron}")
+                print(
+                    f"Already finished for layer {layer} and neuron {neuron}")
                 continue
             else:
                 self.scores_for_neuron(
-                layer, neuron, dataset, embds=embds, n_features_per_neuron=n_features_per_neuron)
+                    layer, neuron, dataset, embds=embds, n_features_per_neuron=n_features_per_neuron)
 
     def scores_for_all(self, dataset: List[str] = None, embds=None):
         # TODO: check cached!!
-        for layer in range(N_BLOCKS):
+        for layer in range(self.params.n_blocks):
             self.scores_for_layer(layer, dataset=dataset, embds=embds)
 
 # TODO: MUTUAL INFORMATION!!!!
