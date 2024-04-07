@@ -58,7 +58,11 @@ def make_kernel_feat(n_dims: int):
 # TODO: WE CAN MAKE THIS EVEN FASTER BY JUST USING NUMPY BASED SEL TECHs
 def feature_prob(x: npt.NDArray, feature_idx: int, kernel_width=0.01):
     kernel = _inner_product
-    x = _check_size(x)
+    mult = 1 if feature_idx % 2 == 0 else -1
+    # x is (bs, d)
+    return x[:, feature_idx // 2] * mult
+    # x = _check_size(x)
+    # return x
     kern = make_kernel_feat(x.shape[-1])
 
     # v = -1 if feature_idx % 2 == 1 else 1
