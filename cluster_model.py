@@ -196,9 +196,8 @@ def log_score_tokens_for_path(embd_dataset: List[npt.NDArray],
         #     print("Scoring on", i, "of", n_tokens)
         top_idx = min(i + BS, n_tokens)
         for layer in range(len(path)):
-            local_scores = kernel.predict_proba(
-                embd_dataset[layer][i:top_idx])
-            local_scores = local_scores[:, path[layer]]
+            local_scores = kernel.feature_prob(
+                embd_dataset[layer][i:top_idx], path[layer])
 
             # Make sure that we never multiply by a negative number
             # Negative just means that we are anti-correlated

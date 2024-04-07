@@ -35,8 +35,20 @@ def _exp_cos_kernel(x, features, kernel_width):
     # print(ret.shape, x.shape, features.shape, cos_inner_prod.shape, exp.shape)
     return ret
 
-def _inner_product(x, features, kernel_width):
+def _inner_product(x, features, kernel_width=None):
     return (features @ np.swapaxes(x, -1, -2)).squeeze(axis=-1)
+
+
+def feature_prob(x: npt.NDArray, feature_idx: int, kernel_width=0.01):
+    kernel = _inner_product
+    x = _check_size(x)
+    v = -1 if feature_idx % 2 == 1 else 1
+    inner = np.zeros((1, 1, x.shape[-1]))
+    inner[0, feature_idx] = 1
+    
+    r = kernel(x, inner, kernel_width)[:, 0, :]
+    print("RET", r.shape)
+    return r
 
 
 # TODO: make kernel width a parameter
