@@ -63,6 +63,8 @@ def _to_nx_graph(cluster_scores: List[npt.NDArray], fix_weighting=True, weightin
 
 def top_k_dag_paths(layers: List[npt.NDArray], layer: int, neuron: int, k: int,
                     weighting_per_edge: List[float] = None, corr_cutoff = 0.01, exclude_set={}):
+    if weighting_per_edge is None:
+        weighting_per_edge = [1.0 for _ in layers]
     # TODO: we no longer have to remake these graphs. One and done
     r = utils.restrict_to_related_vertex(layers, layer, neuron)
     graph, source, sink, graph_layers_to_idx, \

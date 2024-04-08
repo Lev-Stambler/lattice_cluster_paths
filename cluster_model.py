@@ -16,6 +16,7 @@ from params import InterpParams, LatticeParams
 
 DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+
 def get_top_scores(self, dataset: List[str], path: List[int],
                    layer: int, weighting_per_layer, embds=None, top_n=100):
     model = self.model_lens
@@ -42,7 +43,10 @@ def get_top_scores(self, dataset: List[str], path: List[int],
     return tokens_reord[:top_n], scores_reord[:top_n]
 
 # TODO: by different model parameterize?
+
+
 def get_block_base_label(i): return f'blocks.{i}'
+
 
 def get_block_out_label(i): return f'{get_block_base_label(i)}.hook_resid_post'
 
@@ -89,7 +93,8 @@ def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, datas
             outs = model_lens.run_with_cache(d)[1]
             for i, l in enumerate(layers):
                 tens = outs[l]
-                all_outs[i] += list(tens.cpu().numpy().reshape(-1, params.model_n_dims))
+                all_outs[i] += list(tens.cpu().numpy().reshape(-1,
+                                    params.model_n_dims))
                 del tens
     outs_np = [
     ]
@@ -182,7 +187,6 @@ def cutoff_lattice(lattice: List[List[List[float]]], related_cutoff=1):
 # TODO: this is no longer log?
 def log_score_tokens_for_path(embd_dataset: List[npt.NDArray],
                               path: List[int],
-                              layer_start: int,
                               score_weighting_per_layer: npt.NDArray, BS=1_024*64):
     """
     embd_dataset: The outer index corresponds to the layer, the inner index corresponds to the token
@@ -191,21 +195,21 @@ def log_score_tokens_for_path(embd_dataset: List[npt.NDArray],
     # token_per_layer = embd_dataset.swapaxes(0, 1)
     n_tokens = embd_dataset[0].shape[0]
     scores = np.ones(n_tokens)
-    assert len(embd_dataset) == len(path) + layer_start
+    assert len(embd_dataset) == len(path)
 
     for i in range(0, n_tokens, BS):
         # if i % (BS * 10) == 0:
         #     print("Scoring on", i, "of", n_tokens)
         top_idx = min(i + BS, n_tokens)
-        for layer_offset in range(len(path)):
-            layer = layer_offset + layer_start
+        for layer in range(len(path)):
             local_scores = kernel.feature_prob(
-                embd_dataset[layer][i:top_idx], path[layer_offset])
+                embd_dataset[layer][i:top_idx], path[layer])
 
             # Make sure that we never multiply by a negative number
             # Negative just means that we are anti-correlated
+            # TODO: JUST 0 / 1?
             local_scores = local_scores * (local_scores > 0.0)
-            scores[i:top_idx] *= local_scores ** score_weighting_per_layer[layer_offset]
+            scores[i:top_idx] *= local_scores ** score_weighting_per_layer[layer]
             # local_scores
     scores = scores  # Make sure that we are always positive
     return scores
@@ -235,8 +239,8 @@ class Decomposer:
     _k_search = 20
     # TODO: in params?
     # TODO: 2 params... one for lattice and one for scores
-    _weight_decay = 0.9
-    _weight_decay_path_sel = 0.90  # TODO: should we go back to 1 here?
+    # _weight_decay = 0.9
+    # _weight_decay_path_sel = 0.90  # TODO: should we go back to 1 here?
     # TODO: THERE IS STILL A PROBLEM WHERE WE REALLY AREN'T LOOKING AT TOTAL CORRELATION THROUGH THINGS...
 
     def __init__(self, params: paramslib.InterpParams,
@@ -247,7 +251,8 @@ class Decomposer:
         ds = get_dataset(params.dataset_name)
         model, _ = get_transformer(params.model_name)
         self.model_lens = model
-        shuffled = ds.shuffle(seed=params.seed)['train'][:params.n_datasize]['text']
+        shuffled = ds.shuffle(seed=params.seed)[
+            'train'][:params.n_datasize]['text']
         dataset = shuffled
         layers = [get_block_out_label(i) for i in range(params.n_blocks)]
         self.params = params
@@ -305,7 +310,7 @@ class Decomposer:
             to_score, embeds)
         log_scores = log_score_tokens_for_path(
             embd_dataset=embeds, path=score_path,
-            score_weighting_per_layer=weighting_per_layer, layer_start=layer)
+            score_weighting_per_layer=weighting_per_layer)
         item_to_scores = {}
         # return log_scores
         # TODO: BATCHING!
@@ -328,7 +333,6 @@ class Decomposer:
         return get_top_scores(self, dataset, path, layer,
                               weighting_per_layer, embds, top_n)
 
-    
     def scores_for_neuron(self, layer: int, neuron: int, dataset: List[str] = None, n_features_per_neuron=None, embds=None):
         if n_features_per_neuron is None:
             n_features_per_neuron = self.n_features_per_neuron
@@ -338,20 +342,19 @@ class Decomposer:
 
         n_blocks = len(self.layers)
 
-        weighting_per_layer_path_sel = utils.get_weighting_for_layer(
-            layer, n_blocks, weight_decay=self._weight_decay_path_sel)
-        weighting_per_edge = np.concatenate((weighting_per_layer_path_sel[:layer],
-                                            weighting_per_layer_path_sel[layer + 1:]))
+        # weighting_per_layer_path_sel = utils.get_weighting_for_layer(
+        #     layer, n_blocks, weight_decay=self._weight_decay_path_sel)
+        # weighting_per_edge = np.concatenate((weighting_per_layer_path_sel[:layer],
+        #                                     weighting_per_layer_path_sel[layer + 1:]))
 
-		# We always "start" from the current layer"
+        # We always "start" from the current layer"
         weighting_per_layer = utils.get_weighting_for_layer(
-            0, n_blocks - layer, weight_decay=self._weight_decay)
-        weighting_per_layer[layer] = 1
-        print("WEIGHTING PER LAYER", weighting_per_layer,
-              "WEIGHTING PER EDGE", weighting_per_edge)
+            layer, n_blocks)
+        weighting_per_layer[layer] = 1.0
+        print("WEIGHTING PER LAYER", weighting_per_layer)
         paths = graph.get_feature_paths(self.correlation_scores, layer, neuron,
                                         k_search=self._k_search, n_max_features=n_features_per_neuron,
-                                        weighting_per_edge=weighting_per_edge)
+                                        )
         scores_for_path = []
         print("PATHS", paths)
         for i, (path, _path_score) in enumerate(paths):

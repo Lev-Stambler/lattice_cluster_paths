@@ -22,6 +22,7 @@ class InterpParams:
     string_size_cutoff: int
     n_datasize: int
     seed: int
+    quantization: str = '8bit'
 
     lattice: LatticeParams
 
@@ -33,6 +34,7 @@ class InterpParams:
     def get_json_data(self):
         return {
             'seed': self.seed,
+            # 'quantization': self.quantization,
             'n_datasize': self.n_datasize,
             'n_blocks': self.n_blocks,
             'string_size_cutoff': self.string_size_cutoff,
