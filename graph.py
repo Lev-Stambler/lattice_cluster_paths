@@ -77,20 +77,19 @@ def top_k_dag_paths(layers: List[npt.NDArray], layer: int, neuron: int, k: int,
                   node_layers_to_graph[rm_layer][node])
             graph.remove_node(node_layers_to_graph[rm_layer][node])
 
-    node_start  = node_layers_to_graph[layer][0] # Because we select for only 1
-    X = nx.shortest_simple_paths(graph, node_start, sink, weight='weight')
+    X = nx.shortest_simple_paths(graph, source, sink, weight='weight')
 
     paths = []
     for counter, path in enumerate(X):
-        path_no_sink = path[:-1]
+        path_no_sink = path[1:-1]
         # print(path_no_sink, path)
         #  TODO: CANNOT GO BACKWARDS
         # print(path, path_no_sink_no_source)
         # print("PATH NO SINK", path_no_sink)
-        path_node_idx = [graph_layers_to_idx[i + layer][node]
+        path_node_idx = [graph_layers_to_idx[i][node]
                          for i, node in enumerate(path_no_sink)]
-        assert len(path_node_idx) == len(layers) + 1 - layer
-        path_node_idx[0] = neuron
+        assert len(path_node_idx) == len(layers) + 1
+        path_node_idx[layer] = neuron
 
         recovered_weight = sum([
             -1 * weighting_per_edge[i] * (graph[path_no_sink[i]][path_no_sink[i + 1]]['weight'] / GRAPH_SCALING_RESOLUTION \

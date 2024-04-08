@@ -240,7 +240,7 @@ class Decomposer:
     # TODO: in params?
     # TODO: 2 params... one for lattice and one for scores
     # _weight_decay = 0.9
-    # _weight_decay_path_sel = 0.90  # TODO: should we go back to 1 here?
+    _weight_decay_path_sel = 0.80  # TODO: should we go back to 1 here?
     # TODO: THERE IS STILL A PROBLEM WHERE WE REALLY AREN'T LOOKING AT TOTAL CORRELATION THROUGH THINGS...
 
     def __init__(self, params: paramslib.InterpParams,
@@ -342,6 +342,13 @@ class Decomposer:
 
         n_blocks = len(self.layers)
 
+        weighting_per_edge = np.ones(n_blocks - 1)
+        for i in range(n_blocks - 1):
+            if i < layer:
+                weighting_per_edge[i] = self._weight_decay_path_sel ** (layer - i)
+            else:
+                weighting_per_edge[i] = self._weight_decay_path_sel ** (i - layer + 1)
+
         # weighting_per_layer_path_sel = utils.get_weighting_for_layer(
         #     layer, n_blocks, weight_decay=self._weight_decay_path_sel)
         # weighting_per_edge = np.concatenate((weighting_per_layer_path_sel[:layer],
@@ -352,9 +359,10 @@ class Decomposer:
             layer, n_blocks)
         weighting_per_layer[layer] = 1.0
         print("WEIGHTING PER LAYER", weighting_per_layer)
+        print("EDGE DISCOVERY WEIGHTING PER LAYER", weighting_per_edge)
         paths = graph.get_feature_paths(self.correlation_scores, layer, neuron,
                                         k_search=self._k_search, n_max_features=n_features_per_neuron,
-                                        )
+                                        weighting_per_edge=weighting_per_edge)
         scores_for_path = []
         print("PATHS", paths)
         for i, (path, _path_score) in enumerate(paths):
