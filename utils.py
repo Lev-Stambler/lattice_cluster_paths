@@ -11,7 +11,7 @@ import numpy.typing as npt
 # TODO: fix up
 
 
-def get_weighting_for_layer(layer: int, n_layers: int, weight_decay=0.5):
+def get_weighting_for_layer(layer: int, n_layers: int, weight_decay=0.8):
     # TODO: SOMETHING CLEANER
     # if prior_layers_decay is None:
     #     prior_layers_decay = weight_decay
