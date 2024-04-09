@@ -1,4 +1,5 @@
 from typing import List, Dict, Tuple
+from scipy.stats import chi2_contingency
 import torch
 import numpy as np
 from einops import rearrange
@@ -171,13 +172,18 @@ def get_random_cutoff(t: str, size: int):
     return t[start_r:end]
 
 
-def cosine_similarity_with_metric(a: npt.NDArray, b: npt.NDArray, metric: npt.NDArray):
+def cosine_similarity_with_metric(a: npt.NDArray, b: npt.NDArray, metric: npt.NDArray) -> npt.NDArray:
     return np.inner(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
+# def mutual_information(A: npt.NDArray, B: npt.NDArray):
+#     c_xy = np.histogram2d(x, y, bins)[0]
+#     g, p, dof, expected = chi2_contingency(c_xy, lambda_="log-likelihood")
+#     mi = 0.5 * g / c_xy.sum()
+#     return mi
 
-def pairwise_pearson_coefficient(A: npt.NDArray, B: npt.NDArray, eps=1e-8):
+def pairwise_pearson_coefficient_abs(A: npt.NDArray, B: npt.NDArray, eps=1e-8):
     """
-    Compute the pairwise Pearson Correlation Coefficient between two matrices of features.
+    Compute the pairwise Absolute Value of the Pearson Correlation Coefficient between two matrices of features.
 
     Correlation is computed *row wise*
 
@@ -207,7 +213,7 @@ def pairwise_pearson_coefficient(A: npt.NDArray, B: npt.NDArray, eps=1e-8):
     # Finally compute Pearson Correlation Coefficient as 2D array
     # print("DIVIDING BY", np.sqrt(p4*p3[:, None]))
     pcorr = ((p1 - p2) / (np.sqrt(p4*p3[:, None]) + eps))
-    return pcorr
+    return np.abs(pcorr)
 
 def restrict_to_related_vertex(lattice: List[npt.NDArray], layer: int, idx: int) -> List[npt.NDArray]:
     bellow = [] if layer < 2 else lattice[0:layer-1]

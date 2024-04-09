@@ -154,12 +154,12 @@ def cluster_model_lattice(ds: List[npt.NDArray], params: paramslib.InterpParams)
         ds_mmep[:] = ds[i]
         print("Set dataset for layer", i, "Getting proba")
         probs_for_all_layers[i][:] = kernel.predict_proba(
-            ds_mmep, batch_size=128).T
+            ds_mmep, batch_size=2_048).T
         print("Set predictions for layer", i)
     print("Set all probs with predictions")
 
     def score_cluster_to_next(curr_layer_idx: int, next_layer_idx: int) -> List[float]:
-        coeffs = utils.pairwise_pearson_coefficient(
+        coeffs = utils.pairwise_pearson_coefficient_abs(
             probs_for_all_layers[curr_layer_idx], probs_for_all_layers[next_layer_idx])
         print("COEFF STUFF", probs_for_all_layers[curr_layer_idx].max(), probs_for_all_layers[curr_layer_idx].min(),
               coeffs.shape, coeffs.min(), coeffs.max())
@@ -222,11 +222,14 @@ def get_transformer(name: str, quantization: str = None, device=DEFAULT_DEVICE):
     """
     # tokenizer = AutoTokenizer.from_pretrained(name)
     if quantization is None:
-        model = transformer_lens.HookedTransformer.from_pretrained(name).to(device)
+        model = transformer_lens.HookedTransformer.from_pretrained(
+            name).to(device)
     elif quantization == '8bit':
-        model = transformer_lens.HookedTransformer.from_pretrained(name, load_in_8bit=True).to(device)
+        model = transformer_lens.HookedTransformer.from_pretrained(
+            name, load_in_8bit=True).to(device)
     elif quantization == '4bit':
-        model = transformer_lens.HookedTransformer.from_pretrained(name, load_in_4bit=True).to(device)
+        model = transformer_lens.HookedTransformer.from_pretrained(
+            name, load_in_4bit=True).to(device)
     else:
         raise ValueError("Expected either no quantization or 8bit or 4bit")
     tokenizer = model.tokenizer
@@ -240,15 +243,50 @@ def get_dataset(name: str):
     return load_dataset(name)
 
 
+def correlate_internal_to_layer(embeds: List[npt.NDArray], params: InterpParams, use_saved=True):
+    all_corrs = []
+    for layer, embed in enumerate(embeds):
+        f = params.get_and_prepare_correlation_save_tag(
+            f'layer_{layer}_internal_corr')
+        if use_saved and os.path.exists(f):
+            print("Using saved correlation for layer", layer)
+            fo = open(f, 'rb')
+            r = pickle.load(fo)
+            fo.close()
+            all_corrs.append(r)
+            continue
+    
+        prob_for_layer = np.memmap(f'/tmp/mmat_prob_layer_{layer}.dat', dtype='float32',
+                  mode='w+', shape=(params.model_n_dims * 2, embed.shape[0]))  # * 2 as each dimension has a +1 and -1
+        prob_for_layer[:] = 0.0
+        # dataset_mmep = np.memmap(
+        #     f'/tmp/mmat_ds_{layer}.dat', dtype='float32', mode='w+', shape=layer.shape)
+        # dataset_mmep[:] = embed
+        prob_for_layer[:] = kernel.predict_proba(
+           embed, batch_size=1_024 * 8 
+        ).T
+        
+
+        print("Computing internal correlations for layer", layer)
+        corrs = utils.pairwise_pearson_coefficient_abs(prob_for_layer, prob_for_layer)
+        print(layer, "corrs shape", corrs.shape)
+        if use_saved:
+            fo = open(f, 'wb+')
+            pickle.dump(corrs, fo)
+            fo.close()
+        all_corrs.append(corrs)
+    return all_corrs
+
+
 class Decomposer:
     correlation_scores: List[List[List[float]]]
     # TODO: there has to be a smarter K-search alg
     # _k_search = N_DIMS * 2 #TODO: Back
-    _k_search = 20
+    _k_search = 10
     # TODO: in params?
     # TODO: 2 params... one for lattice and one for scores
     # _weight_decay = 0.9
-    _weight_decay_path_sel = 0.80  # TODO: should we go back to 1 here?
+    _weight_decay_path_sel = 1.0  # TODO: should we go back to 1 here?
     # TODO: THERE IS STILL A PROBLEM WHERE WE REALLY AREN'T LOOKING AT TOTAL CORRELATION THROUGH THINGS...
 
     def __init__(self, params: paramslib.InterpParams,
@@ -287,6 +325,9 @@ class Decomposer:
     def load(self):
         self.correlation_scores = cluster_model_lattice(
             self.ds_emb, params=self.params)
+        self.internal_correlations = correlate_internal_to_layer(
+            self.ds_emb, params=self.params
+        )
 
     def _get_ds_metadata(self, ds: List[str], embeds: npt.NDArray = None):
         if embeds is None:
@@ -354,10 +395,10 @@ class Decomposer:
         for i in range(n_blocks - 1):
             if i < layer:
                 weighting_per_edge[i] = self._weight_decay_path_sel ** (
-                    layer - i)
+                    layer - i - 1)
             else:
                 weighting_per_edge[i] = self._weight_decay_path_sel ** (
-                    i - layer + 1)
+                    i - layer)
 
         # weighting_per_layer_path_sel = utils.get_weighting_for_layer(
         #     layer, n_blocks, weight_decay=self._weight_decay_path_sel)
@@ -372,15 +413,15 @@ class Decomposer:
         print("EDGE DISCOVERY WEIGHTING PER LAYER", weighting_per_edge)
         paths = graph.get_feature_paths(self.correlation_scores, layer, neuron,
                                         k_search=self._k_search, n_max_features=n_features_per_neuron,
-                                        weighting_per_edge=weighting_per_edge)
+                                        weighting_per_edge=weighting_per_edge, all_disjoint=True)
         scores_for_path = []
-        print("PATHS", paths)
+        print(f"Paths for neuron {neuron}", paths)
         for i, (path, _path_score) in enumerate(paths):
-            print("LOOKING AT PATH", path, i + 1, "out of", len(paths))
+            # print("LOOKING AT PATH", path, i + 1, "out of", len(paths))
             t, s = self.get_top_scores(
                 dataset, path, layer, weighting_per_layer, embds)
             scores_for_path.append((t, s))
-            print("Done with path", i + 1, "out of", len(paths))
+            # print("Done with path", i + 1, "out of", len(paths))
 
             # TODO: maybe save json instead?
         visualization.save_display_for_neuron(

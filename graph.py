@@ -62,7 +62,7 @@ def _to_nx_graph(cluster_scores: List[npt.NDArray], fix_weighting=True, weightin
 
 
 def top_k_dag_paths(layers: List[npt.NDArray], layer: int, neuron: int, k: int,
-                    weighting_per_edge: List[float] = None, corr_cutoff = 0.01, exclude_set={}):
+                    weighting_per_edge: List[float] = None, corr_cutoff=0.01, exclude_set={}, all_disjoint=False):
     if weighting_per_edge is None:
         weighting_per_edge = [1.0 for _ in layers]
     # TODO: we no longer have to remake these graphs. One and done
@@ -78,42 +78,78 @@ def top_k_dag_paths(layers: List[npt.NDArray], layer: int, neuron: int, k: int,
             graph.remove_node(node_layers_to_graph[rm_layer][node])
 
     X = nx.shortest_simple_paths(graph, source, sink, weight='weight')
-
     paths = []
+
+		# TODO: sep fn
+    if all_disjoint:
+        print("Looking for disjoint paths")
+        for _ in range(k):
+            path = next(X)
+            path_no_endpoints = path[1:-1]
+            # print(path_no_sink, path)
+            #  TODO: CANNOT GO BACKWARDS
+            # print(path, path_no_sink_no_source)
+            # print("PATH NO SINK", path_no_sink)
+            path_node_idx = [graph_layers_to_idx[i][node]
+                             for i, node in enumerate(path_no_endpoints)]
+            assert len(path_node_idx) == len(layers) + 1
+            path_node_idx[layer] = neuron
+
+            recovered_weight = sum([
+                -1 * weighting_per_edge[i] * (graph[path_no_endpoints[i]][path_no_endpoints[i + 1]]['weight'] / GRAPH_SCALING_RESOLUTION
+                                              - most_pos_per_layer[i])
+                for i in range(0, len(path_no_endpoints) - 1)])
+
+            paths.append((path_node_idx, recovered_weight))
+            print(paths[-1])
+
+            path_no_layer = path_no_endpoints[:layer] + [] if layer == len(
+                layers) else path_no_endpoints[layer + 1:]
+            # print("Removing", path_no_layer)
+            for n in path_no_layer:
+                graph.remove_node(n)
+            
+            X = nx.shortest_simple_paths(graph, source, sink, weight='weight')
+        return paths
+
     for counter, path in enumerate(X):
-        path_no_sink = path[1:-1]
+        path_no_endpoints = path[1:-1]
         # print(path_no_sink, path)
         #  TODO: CANNOT GO BACKWARDS
         # print(path, path_no_sink_no_source)
         # print("PATH NO SINK", path_no_sink)
         path_node_idx = [graph_layers_to_idx[i][node]
-                         for i, node in enumerate(path_no_sink)]
+                         for i, node in enumerate(path_no_endpoints)]
         assert len(path_node_idx) == len(layers) + 1
         path_node_idx[layer] = neuron
 
         recovered_weight = sum([
-            -1 * weighting_per_edge[i] * (graph[path_no_sink[i]][path_no_sink[i + 1]]['weight'] / GRAPH_SCALING_RESOLUTION \
-                - most_pos_per_layer[i]) 
-            for i in range(0, len(path_no_sink) - 1)])  
-        
+            -1 * weighting_per_edge[i] * (graph[path_no_endpoints[i]][path_no_endpoints[i + 1]]['weight'] / GRAPH_SCALING_RESOLUTION
+                                          - most_pos_per_layer[i])
+            for i in range(0, len(path_no_endpoints) - 1)])
+
         paths.append((path_node_idx, recovered_weight))
         print(paths[-1])
+       
         if counter == k-1:
             break
     return paths
 
 
 def get_feature_paths(lattice, layer: int, neuron: int, k_search=20,
-                      weighting_per_edge: List[float] = None, n_max_features=5):
+                      weighting_per_edge: List[float] = None, n_max_features=5, all_disjoint=False):
     print(f"Getting top {k_search} paths")
     assert weighting_per_edge is None or len(
         weighting_per_edge) == len(lattice)
     assert len(lattice) > 1, "Need at least 2 layers"
     searched_paths = top_k_dag_paths(
         lattice, layer=layer, neuron=neuron, k=k_search,
-        weighting_per_edge=weighting_per_edge)
+        weighting_per_edge=weighting_per_edge, all_disjoint=all_disjoint)
     print(f"Got top {k_search} paths")
     paths = [p[0] for p in searched_paths]
+    # If everything is disjoint, it is already disimilar enough
+    if all_disjoint:
+        return searched_paths[:n_max_features]
 
     n_layers_in_path = len(lattice) - layer
 
