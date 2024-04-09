@@ -37,8 +37,9 @@ def _exp_cos_kernel(x, features, kernel_width):
     # print(ret.shape, x.shape, features.shape, cos_inner_prod.shape, exp.shape)
     return ret
 
-def _inner_product(x, features, kernel_width=None):
-    return (features @ np.swapaxes(x, -1, -2)).squeeze(axis=-1)
+def _inner_product_pos_only(x, features, kernel_width=None):
+    r = (features @ np.swapaxes(x, -1, -2)).squeeze(axis=-1)
+    return r * (r > 0)
 
 def make_kernel_feat(n_dims: int):
     global _kernel_feat
@@ -57,7 +58,7 @@ def make_kernel_feat(n_dims: int):
 
 # TODO: WE CAN MAKE THIS EVEN FASTER BY JUST USING NUMPY BASED SEL TECHs
 def feature_prob(x: npt.NDArray, feature_idx: int, kernel_width=0.01):
-    kernel = _inner_product
+    kernel = _inner_product_pos_only
     mult = 1 if feature_idx % 2 == 0 else -1
     # x is (bs, d)
     return x[:, feature_idx // 2] * mult
@@ -76,7 +77,7 @@ def feature_prob(x: npt.NDArray, feature_idx: int, kernel_width=0.01):
 # TODO: make kernel width a parameter
 # TODO: make the type of kernel used a parm
 def predict_proba(x: npt.NDArray, batch_size=-1, kernel_width=0.01):
-    kernel = _inner_product
+    kernel = _inner_product_pos_only
 
     x = _check_size(x)
     n_dims = x.shape[-1]

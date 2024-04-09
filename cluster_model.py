@@ -22,7 +22,7 @@ def get_top_scores(self, dataset: List[str], path: List[int],
                    layer: int, weighting_per_layer, embds=None, top_n=100):
     model = self.model_lens
     n_blocks = len(path)
-    BOS_TOKEN = '\<BOS\>'
+    BOS_TOKEN = '||BOS||'
     score_path = path
     print(weighting_per_layer)
     scores = self.score(
