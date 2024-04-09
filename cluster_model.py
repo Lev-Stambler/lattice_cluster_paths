@@ -7,12 +7,13 @@ import numpy.typing as npt
 import torch
 import transformer_lens
 import kernel
-import params as paramslib
+import metadata as paramslib
 import utils
 import visualization
 import graph
+import json
 
-from params import InterpParams, LatticeParams
+from metadata import InterpParams, LatticeParams
 
 DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -21,7 +22,7 @@ def get_top_scores(self, dataset: List[str], path: List[int],
                    layer: int, weighting_per_layer, embds=None, top_n=100):
     model = self.model_lens
     n_blocks = len(path)
-    BOS_TOKEN = '<BOS>'
+    BOS_TOKEN = '\<BOS\>'
     score_path = path
     print(weighting_per_layer)
     scores = self.score(
@@ -215,12 +216,19 @@ def log_score_tokens_for_path(embd_dataset: List[npt.NDArray],
     return scores
 
 
-def get_transformer(name: str, device=DEFAULT_DEVICE):
+def get_transformer(name: str, quantization: str = None, device=DEFAULT_DEVICE):
     """
     Get the transformer model from the name
     """
     # tokenizer = AutoTokenizer.from_pretrained(name)
-    model = transformer_lens.HookedTransformer.from_pretrained(name).to(device)
+    if quantization is None:
+        model = transformer_lens.HookedTransformer.from_pretrained(name).to(device)
+    elif quantization == '8bit':
+        model = transformer_lens.HookedTransformer.from_pretrained(name, load_in_8bit=True).to(device)
+    elif quantization == '4bit':
+        model = transformer_lens.HookedTransformer.from_pretrained(name, load_in_4bit=True).to(device)
+    else:
+        raise ValueError("Expected either no quantization or 8bit or 4bit")
     tokenizer = model.tokenizer
     return model, tokenizer
 
@@ -244,7 +252,7 @@ class Decomposer:
     # TODO: THERE IS STILL A PROBLEM WHERE WE REALLY AREN'T LOOKING AT TOTAL CORRELATION THROUGH THINGS...
 
     def __init__(self, params: paramslib.InterpParams,
-                 n_max_features_per_neuron=8):
+                 n_max_features_per_neuron=4):
         torch.manual_seed(params.seed)
         np.random.seed(params.seed)
 
@@ -345,9 +353,11 @@ class Decomposer:
         weighting_per_edge = np.ones(n_blocks - 1)
         for i in range(n_blocks - 1):
             if i < layer:
-                weighting_per_edge[i] = self._weight_decay_path_sel ** (layer - i)
+                weighting_per_edge[i] = self._weight_decay_path_sel ** (
+                    layer - i)
             else:
-                weighting_per_edge[i] = self._weight_decay_path_sel ** (i - layer + 1)
+                weighting_per_edge[i] = self._weight_decay_path_sel ** (
+                    i - layer + 1)
 
         # weighting_per_layer_path_sel = utils.get_weighting_for_layer(
         #     layer, n_blocks, weight_decay=self._weight_decay_path_sel)
@@ -375,13 +385,17 @@ class Decomposer:
             # TODO: maybe save json instead?
         visualization.save_display_for_neuron(
             scores_for_path, paths, layer, neuron)
+        json_save_path = self.params.get_feature_json_path(layer, neuron)
+        f = open(json_save_path, 'w+')
+        json.dump(scores_for_path, f)
+        f.close()
         print("Finished for neuron", layer, neuron)
 
     def scores_for_layer(self, layer: int, dataset: List[str] = None, embds=None, n_features_per_neuron=None, check_save=True):
         # TODO: meta tag
         # TODO: diff dem by feature
         for neuron in range(self.params.model_n_dims * 2):
-            if check_save and os.path.exists(visualization.save_path(layer, neuron)):
+            if check_save and os.path.exists(self.params.get_feature_json_path(layer, neuron)):
                 print(
                     f"Already finished for layer {layer} and neuron {neuron}")
                 continue
