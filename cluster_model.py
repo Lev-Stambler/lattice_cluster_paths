@@ -21,10 +21,8 @@ DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 def get_top_scores(self, dataset: List[str], path: List[int],
                    layer: int, weighting_per_layer, embds=None, top_n=100):
     model = self.model_lens
-    n_blocks = len(path)
     BOS_TOKEN = '||BOS||'
     score_path = path
-    print(weighting_per_layer)
     scores = self.score(
         dataset,
         layer=layer,
@@ -115,7 +113,7 @@ def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, datas
             # print("ON", i, top_idx, all_outs[l][i:top_idx])
             out_np[i:top_idx, :] = np.array(all_outs[l][i:top_idx])
         outs_np.append(out_np)
-    print("Finished and saving to file")
+    print("Finished and saving to file\n")
     if use_save:
         f = open(all_finished, 'w')
         f.write('done')
