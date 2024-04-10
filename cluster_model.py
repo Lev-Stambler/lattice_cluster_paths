@@ -34,13 +34,15 @@ def get_top_scores(self, dataset: List[str], path: List[int],
         embeds=embds
     )
 
-    scores_per_token_set = np.array([max(s) for s in scores])
-    top_args = np.argsort(scores_per_token_set)[::-1]
+    overall_scores = [[tok_score[0] for tok_score in s] for s in scores]
+    scores_per_token_set = np.array([max(s) for s in overall_scores])
+    top_args = np.argsort(scores_per_token_set)[::-1][:top_n]
     # TODO: BOS?
     tokens = [[BOS_TOKEN] + [model.tokenizer.decode(t) for t in model.tokenizer(d)[
         'input_ids']] for d in dataset]
     tokens_reord = [tokens[i] for i in top_args]
-    scores_reord = [scores[i] for i in top_args]
+    # A bit messy but go from numpy to list here
+    scores_reord = [[s.tolist() for s in scores[i]] for i in top_args]
     return tokens_reord[:top_n], scores_reord[:top_n]
 
 # TODO: by different model parameterize?
@@ -188,32 +190,41 @@ def cutoff_lattice(lattice: List[List[List[float]]], related_cutoff=1):
 # TODO: this is no longer log?
 def log_score_tokens_for_path(embd_dataset: List[npt.NDArray],
                               path: List[int],
-                              score_weighting_per_layer: npt.NDArray, BS=1_024*64):
+                              score_weighting_per_layer: npt.NDArray, layer: int, BS=1_024*64, ignore_weights=False):
     """
     embd_dataset: The outer index corresponds to the layer, the inner index corresponds to the token
     """
     # Set the outer index to the token
     # token_per_layer = embd_dataset.swapaxes(0, 1)
     n_tokens = embd_dataset[0].shape[0]
-    scores = np.ones(n_tokens)
+    # scores = np.ones(n_tokens)
+    n_layers = len(path)
+    all_scores = np.ones((n_tokens, 1 + n_layers))
     assert len(embd_dataset) == len(path)
 
     for i in range(0, n_tokens, BS):
         # if i % (BS * 10) == 0:
         #     print("Scoring on", i, "of", n_tokens)
         top_idx = min(i + BS, n_tokens)
-        for layer in range(len(path)):
+        for curr_layer in range(len(path)):
             local_scores = kernel.feature_prob(
-                embd_dataset[layer][i:top_idx], path[layer])
+                embd_dataset[curr_layer][i:top_idx], path[curr_layer])
 
             # Make sure that we never multiply by a negative number
             # Negative just means that we are anti-correlated
             # TODO: JUST 0 / 1?
-            local_scores = local_scores * (local_scores > 0.0)
-            scores[i:top_idx] *= local_scores ** score_weighting_per_layer[layer]
+            # local_scores = local_scores * (local_scores > 0.0)
+            all_scores[i:top_idx, 1 + curr_layer] = local_scores
+            if not ignore_weights:
+                all_scores[i:top_idx,
+                           0] *= local_scores ** score_weighting_per_layer[curr_layer]
+            else:
+                all_scores[i:top_idx, 0] *= local_scores if layer == curr_layer else (
+                    # ARGHHGHGHG would be so usefule to have a quantized model here...
+                    # TODO: lets make sure to look into that...
+                    local_scores > 0.1)  # TODO: should we think about **segmented regions**?
             # local_scores
-    scores = scores  # Make sure that we are always positive
-    return scores
+    return all_scores
 
 
 def get_transformer(name: str, quantization: str = None, device=DEFAULT_DEVICE):
@@ -255,20 +266,20 @@ def correlate_internal_to_layer(embeds: List[npt.NDArray], params: InterpParams,
             fo.close()
             all_corrs.append(r)
             continue
-    
+
         prob_for_layer = np.memmap(f'/tmp/mmat_prob_layer_{layer}.dat', dtype='float32',
-                  mode='w+', shape=(params.model_n_dims * 2, embed.shape[0]))  # * 2 as each dimension has a +1 and -1
+                                   mode='w+', shape=(params.model_n_dims * 2, embed.shape[0]))  # * 2 as each dimension has a +1 and -1
         prob_for_layer[:] = 0.0
         # dataset_mmep = np.memmap(
         #     f'/tmp/mmat_ds_{layer}.dat', dtype='float32', mode='w+', shape=layer.shape)
         # dataset_mmep[:] = embed
         prob_for_layer[:] = kernel.predict_proba(
-           embed, batch_size=1_024 * 8 
+            embed, batch_size=1_024 * 8
         ).T
-        
 
         print("Computing internal correlations for layer", layer)
-        corrs = utils.pairwise_pearson_coefficient_abs(prob_for_layer, prob_for_layer)
+        corrs = utils.pairwise_pearson_coefficient_abs(
+            prob_for_layer, prob_for_layer)
         print(layer, "corrs shape", corrs.shape)
         if use_saved:
             fo = open(f, 'wb+')
@@ -357,17 +368,18 @@ class Decomposer:
 
         embeds, token_to_original_ds, _ = self._get_ds_metadata(
             to_score, embeds)
-        log_scores = log_score_tokens_for_path(
+        all_scores = log_score_tokens_for_path(
             embd_dataset=embeds, path=score_path,
-            score_weighting_per_layer=weighting_per_layer)
+            score_weighting_per_layer=weighting_per_layer, layer=layer,
+            ignore_weights=True)
         item_to_scores = {}
         # return log_scores
         # TODO: BATCHING!
-        for i in range(len(log_scores)):
+        for i in range(len(all_scores)):
             item = token_to_original_ds[i]
             if item not in item_to_scores:
                 item_to_scores[item] = []
-            item_to_scores[item].append(log_scores[i])
+            item_to_scores[item].append(all_scores[i])
         # Assuming that the scores are "dense" in how they were added, we have a list
         ks = sorted(list(item_to_scores.keys()))
         final_scores = []
@@ -408,7 +420,6 @@ class Decomposer:
         # We always "start" from the current layer"
         weighting_per_layer = utils.get_weighting_for_layer(
             layer, n_blocks)
-        weighting_per_layer[layer] = 1.0
         print("WEIGHTING PER LAYER", weighting_per_layer)
         print("EDGE DISCOVERY WEIGHTING PER LAYER", weighting_per_edge)
         paths = graph.get_feature_paths(self.correlation_scores, layer, neuron,
@@ -418,9 +429,9 @@ class Decomposer:
         print(f"Paths for neuron {neuron}", paths)
         for i, (path, _path_score) in enumerate(paths):
             # print("LOOKING AT PATH", path, i + 1, "out of", len(paths))
-            t, s = self.get_top_scores(
+            toks, scores = self.get_top_scores(
                 dataset, path, layer, weighting_per_layer, embds)
-            scores_for_path.append((t, s))
+            scores_for_path.append((toks, scores))
             # print("Done with path", i + 1, "out of", len(paths))
 
             # TODO: maybe save json instead?

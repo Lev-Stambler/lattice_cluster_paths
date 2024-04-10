@@ -1,7 +1,7 @@
 const load_neurons = async () => {
   window.onload = async () => {
     const n_layers = 6;
-    const n_neurons = 512;
+    const n_neurons = 1024;
     const flattened = Array(n_layers * n_neurons)
       .fill(0)
       .map((_, i) => [

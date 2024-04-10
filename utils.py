@@ -12,7 +12,7 @@ import numpy.typing as npt
 # TODO: fix up
 
 
-def get_weighting_for_layer(layer: int, n_layers: int, weight_decay=0.8):
+def get_weighting_for_layer(layer: int, n_layers: int, weight_decay=0.8, peak_at_layer_only=False):
     # TODO: SOMETHING CLEANER
     # if prior_layers_decay is None:
     #     prior_layers_decay = weight_decay
@@ -20,12 +20,13 @@ def get_weighting_for_layer(layer: int, n_layers: int, weight_decay=0.8):
     r[layer] = 1
     G = weight_decay
     for i in range(layer):
-        # TODO: put back
-        r[i] = G ** (layer - i)
-        # r[i] = 0.0001
+        if peak_at_layer_only:
+            r[i] = 1e-5
+        else: r[i] = G ** (layer - i)
     for i in range(layer + 1, n_layers):
-        # Decrease by Gx per layer
-        r[i] = G ** (i - layer)
+        if peak_at_layer_only:
+            r[i] = 1e-5
+        else: r[i] = G ** (i - layer)
         # r[i] = 0.0001
     # TODO: THE LAST LAYER SEEMS TO SELECTIVE... we need a smarter way of doing things than simply choosing highest
     # if layer != n_layers - 1:
