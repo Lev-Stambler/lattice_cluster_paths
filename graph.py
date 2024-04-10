@@ -83,8 +83,15 @@ def top_k_dag_paths(layers: List[npt.NDArray], layer: int, neuron: int, k: int,
 		# TODO: sep fn
     if all_disjoint:
         print("Looking for disjoint paths")
-        for _ in range(k):
-            path = next(X)
+        for path_try in range(k):
+            try:
+                path = next(X)
+            except:
+                print(f"No path for neuron {neuron}")
+                f = open('failed_neurons.txt', '+a')
+                f.write(f'{layer};{neuron};{path_try}\n')
+                f.close()
+                return paths
             path_no_endpoints = path[1:-1]
             # print(path_no_sink, path)
             #  TODO: CANNOT GO BACKWARDS
