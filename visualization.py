@@ -4,13 +4,14 @@ from circuitsvis.utils.render import render
 
 # TODO: use meta tage
 def save_path(layer: int, neuron: int):
-    return f"built_html/neurons/layer_{layer}_neuron_{neuron}.htm"
+    return f"built_vis_cite/neurons/layer_{layer}_neuron_{neuron}.htm"
 
 def display_top_scores(tokens_reord, scores_for_path):
     # maxes_per_score = [max(s) for s in scores_for_path]
     # max_score = max(maxes_per_score)
     # print("AAAAAA \n\n", scores_for_path[0][0].shape, scores_for_path[0][0])
-    act_simp = [[[tok]
+    # TODO: probs can reord these better
+    act_simp = [[[ [tok]]
                  for tok in s] for s in scores_for_path]
     # act_simp = [[[[tok_score]] for tok_score in data_str
     #     ] for data_str in scores_for_paths]

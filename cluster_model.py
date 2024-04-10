@@ -34,15 +34,15 @@ def get_top_scores(self, dataset: List[str], path: List[int],
         embeds=embds
     )
 
-    overall_scores = [[tok_score[0] for tok_score in s] for s in scores]
-    scores_per_token_set = np.array([max(s) for s in overall_scores])
+    # overall_scores = [[tok_score[0] for tok_score in s] for s in scores]
+    scores_per_token_set = np.array([max(s) for s in scores])
     top_args = np.argsort(scores_per_token_set)[::-1][:top_n]
     # TODO: BOS?
     tokens = [[BOS_TOKEN] + [model.tokenizer.decode(t) for t in model.tokenizer(d)[
         'input_ids']] for d in dataset]
     tokens_reord = [tokens[i] for i in top_args]
-    # A bit messy but go from numpy to list here
-    scores_reord = [[s.tolist() for s in scores[i]] for i in top_args]
+
+    scores_reord = [scores[i] for i in top_args]
     return tokens_reord[:top_n], scores_reord[:top_n]
 
 # TODO: by different model parameterize?
@@ -190,7 +190,7 @@ def cutoff_lattice(lattice: List[List[List[float]]], related_cutoff=1):
 # TODO: this is no longer log?
 def log_score_tokens_for_path(embd_dataset: List[npt.NDArray],
                               path: List[int],
-                              score_weighting_per_layer: npt.NDArray, layer: int, BS=1_024*64, ignore_weights=False):
+                              score_weighting_per_layer: npt.NDArray, layer: int, BS=1_024*128, ignore_weights=False):
     """
     embd_dataset: The outer index corresponds to the layer, the inner index corresponds to the token
     """
@@ -199,8 +199,20 @@ def log_score_tokens_for_path(embd_dataset: List[npt.NDArray],
     n_tokens = embd_dataset[0].shape[0]
     # scores = np.ones(n_tokens)
     n_layers = len(path)
-    all_scores = np.ones((n_tokens, 1 + n_layers))
+    ret_scores = np.ones(n_tokens)
     assert len(embd_dataset) == len(path)
+
+    # TODO: lazy load this or save it for use for later
+    def get_cutoff_for_layer(neuron: int, layer_to_cutoff: int):
+        fs = kernel.feature_prob(embd_dataset[layer_to_cutoff], neuron)
+        nonzeros = fs[np.where(fs > 0)]
+        if len(nonzeros) == 0:
+            return 0.0
+        return sum(nonzeros) / len(nonzeros)
+
+    cutoffs = [
+        get_cutoff_for_layer(n, i) for i, n in enumerate(path)
+    ]
 
     for i in range(0, n_tokens, BS):
         # if i % (BS * 10) == 0:
@@ -214,17 +226,15 @@ def log_score_tokens_for_path(embd_dataset: List[npt.NDArray],
             # Negative just means that we are anti-correlated
             # TODO: JUST 0 / 1?
             # local_scores = local_scores * (local_scores > 0.0)
-            all_scores[i:top_idx, 1 + curr_layer] = local_scores
             if not ignore_weights:
-                all_scores[i:top_idx,
-                           0] *= local_scores ** score_weighting_per_layer[curr_layer]
+                ret_scores[i:top_idx] *= local_scores ** score_weighting_per_layer[curr_layer]
             else:
-                all_scores[i:top_idx, 0] *= local_scores if layer == curr_layer else (
+                ret_scores[i:top_idx] *= local_scores if layer == curr_layer else (
                     # ARGHHGHGHG would be so usefule to have a quantized model here...
                     # TODO: lets make sure to look into that...
-                    local_scores > 0.1)  # TODO: should we think about **segmented regions**?
+                    local_scores > cutoffs[curr_layer])  # TODO: should we think about **segmented regions**?
             # local_scores
-    return all_scores
+    return ret_scores
 
 
 def get_transformer(name: str, quantization: str = None, device=DEFAULT_DEVICE):
@@ -293,7 +303,7 @@ class Decomposer:
     correlation_scores: List[List[List[float]]]
     # TODO: there has to be a smarter K-search alg
     # _k_search = N_DIMS * 2 #TODO: Back
-    _k_search = 10
+    _k_search = 7
     # TODO: in params?
     # TODO: 2 params... one for lattice and one for scores
     # _weight_decay = 0.9
@@ -301,7 +311,7 @@ class Decomposer:
     # TODO: THERE IS STILL A PROBLEM WHERE WE REALLY AREN'T LOOKING AT TOTAL CORRELATION THROUGH THINGS...
 
     def __init__(self, params: paramslib.InterpParams,
-                 n_max_features_per_neuron=7):
+                 n_max_features_per_neuron=6):
         torch.manual_seed(params.seed)
         np.random.seed(params.seed)
 
