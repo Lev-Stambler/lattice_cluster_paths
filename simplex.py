@@ -45,9 +45,28 @@ def _calc_across_layer_sim_score(clique_lower: Face,
     return total_corr / (len(clique_lower[1] * len(clique_upper[1])))
 
 
+def _sparsity_correlation_graph(G: nx.Graph, keep_neighbs_upper: int):
+    weight_attrs = nx.get_edge_attributes(G, 'weight')
+    for node in G.nodes:
+        edges = [tuple(list(sorted(e))) for e in G.edges(node)]
+        if len(edges) == 0: #TODO: ahahaha 0
+            continue
+        es = [weight_attrs[edge] for edge in edges]
+        # print(edges)
+        es.sort(reverse=True)
+        cutoff = es[min(keep_neighbs_upper, len(es) - 1)]
+        # print(edges, cutoff)
+        to_remove = [edge for edge in edges if weight_attrs[edge] < cutoff]
+
+        # I LOVE DEI
+        (G.remove_edge(edge) for edge in to_remove)
+    return G
+
+
 def find_high_weight_faces(correlations: npt.NDArray[2],
                            n_cliques_per_vertex=3, n_search_per_vertex=100,
-                           correlation_cutoff=0.11) -> List[Face]:  # TODO: what is the right correlation cutoff? Somehow we want to **encourage** sparsity. Of course this is like layer dependent. Maybe we do something like only keep top K neighbors of every node
+                           upper_neighbs = 4,
+                           correlation_cutoff=0.09) -> List[Face]:  # TODO: what is the right correlation cutoff? Somehow we want to **encourage** sparsity. Of course this is like layer dependent. Maybe we do something like only keep top K neighbors of every node
     """
     Find the high weight cliques within a layer's correlation graph.
     The return is a list of tuples corresponding to clique weight and the indices
@@ -61,6 +80,7 @@ def find_high_weight_faces(correlations: npt.NDArray[2],
     for i in range(len(corrs_cutoff)):
         corrs_cutoff[i, i] = 0
     G = nx.from_numpy_array(corrs_cutoff, edge_attr='weight')
+    G = _sparsity_correlation_graph(G, upper_neighbs)
 
     for N in range(n_nodes):
         # print("Getting clique centered at", N)
