@@ -61,7 +61,7 @@ def _to_nx_graph(cluster_scores: List[npt.NDArray], fix_weighting=True, weightin
     return G, source, sink, graph_idx_to_node_idx, node_idx_to_graph_idx, most_pos_per_layer
 
 
-def top_k_dag_paths(layers: List[npt.NDArray], layer: int, neuron: int, k: int,
+def top_k_dag_paths(layers: List[npt.NDArray[2]], layer: int, neuron: int, k: int,
                     weighting_per_edge: List[float] = None, corr_cutoff=0.01, exclude_set={}, all_disjoint=False):
     if weighting_per_edge is None:
         weighting_per_edge = [1.0 for _ in layers]
