@@ -16,7 +16,8 @@ def _get_avg_clique_weight(weight_attrs, face: List[int]):
     # TODO: we do have this though... this is like a dead neuron
     if len(face) <= 1:
         return 0.0
-    # if len(clique) > 15:
+    # TODO: RM this when find smarter way...
+    # if len(face) > 5:
     #     return 0
     # print("GET AVG", len(clique))
     for i in range(len(face)):
@@ -34,17 +35,19 @@ def _calc_across_layer_sim_score(clique_lower: Face,
                                  inter_layer_corr: npt.NDArray[2]) -> float:
     """
     An **commutative** function (i.e. clique_lower and clique_upper are exchangeable)
+
+    We are looking for the **average** weight across the edges. This way, large cliques are not advantaged
     """
     total_corr = 0.0
     for cl in clique_lower[1]:
         for cu in clique_upper[1]:
             total_corr += inter_layer_corr[cl, cu]
-    return total_corr
+    return total_corr / (len(clique_lower[1] * len(clique_upper[1])))
 
 
 def find_high_weight_faces(correlations: npt.NDArray[2],
                            n_cliques_per_vertex=3, n_search_per_vertex=100,
-                           correlation_cutoff=0.04) -> List[Face]:
+                           correlation_cutoff=0.11) -> List[Face]:  # TODO: what is the right correlation cutoff? Somehow we want to **encourage** sparsity. Of course this is like layer dependent. Maybe we do something like only keep top K neighbors of every node
     """
     Find the high weight cliques within a layer's correlation graph.
     The return is a list of tuples corresponding to clique weight and the indices
@@ -94,7 +97,7 @@ def find_high_weight_faces(correlations: npt.NDArray[2],
 
 
 def face_correlation_lattice(inter_layer_correlations: List[npt.NDArray[2]],
-                               faces: List[List[Face]]) -> List[npt.NDArray[2]]:
+                             faces: List[List[Face]]) -> List[npt.NDArray[2]]:
     n_layers = len(faces)
     clique_lists = [
         np.memmap(f'/tmp/mmat_clique_corr_layer_{layer}.dat', dtype='float32',
@@ -103,9 +106,10 @@ def face_correlation_lattice(inter_layer_correlations: List[npt.NDArray[2]],
         for layer in range(n_layers - 1)]
     # For every layer calculate the cliques
     for layer in range(n_layers - 1):
+        print("Correlating", layer, "to", layer + 1)
         for i, face_lower in enumerate(faces[layer]):
             for j, face_upper in enumerate(faces[layer + 1]):
                 clique_lists[layer][i, j] = _calc_across_layer_sim_score(face_lower,
-                                                                  face_upper,
-                                                                  inter_layer_correlations[layer])
+                                                                         face_upper,
+                                                                         inter_layer_correlations[layer])
     return clique_lists
