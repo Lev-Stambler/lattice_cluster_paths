@@ -5,7 +5,7 @@ type BasisDescription = {
 
 type LayerFeatures = { [layer: number]: BasisDescription[] }[];
 
-export interface FeatureSet {
+export interface Metadata {
 	n_layers: number,
-  layer_to_features: LayerFeatures[];
+  // layer_to_features: LayerFeatures[];
 }

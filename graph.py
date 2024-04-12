@@ -68,7 +68,6 @@ def _top_k_dag_paths(
     n_layers: int, layer: int, neuron: int, k: int,
     # layers: List[npt.NDArray[2]], layer: int, neuron: int, k: int,
         exclude_set={}, all_disjoint=False):
-    start = time.time()
     # r = utils.restrict_to_related_vertex(layers, layer, neuron)
     # graph, source, sink, graph_layers_to_idx, \
     #     node_layers_to_graph, most_pos_per_layer = _to_nx_graph(
@@ -79,9 +78,9 @@ def _top_k_dag_paths(
             print("Removing", rm_layer, node,
                   node_layers_to_graph[rm_layer][node])
             graph.remove_node(node_layers_to_graph[rm_layer][node])
-    print("Time spent building graph", time.time() - start)
     start = time.time()
 
+    print(source, sink)
     X = nx.shortest_simple_paths(graph, source, sink, weight='weight')
     paths = []
 
