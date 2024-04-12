@@ -245,12 +245,12 @@ class GraphOfCorrs:
     def _restrict_g_to_neuron(self, layer: int, neuron: int) -> nx.Graph:
         new_g = self.G.copy()
         for n in self.node_idx_to_graph_idx[layer].keys():
-            if n != neuron:
+            if n != neuron and self.G.has_node(self.node_idx_to_graph_idx[layer][n]):
                 new_g.remove_node(self.node_idx_to_graph_idx[layer][n])
         return new_g
 
-    def get_top_k_paths(self, layer: int, neuron: int, k: int):
+    def get_top_k_paths(self, layer: int, neuron: int, k: int, all_disjoint=True):
         r = self._restrict_g_to_neuron(layer, neuron)
-        _top_k_dag_paths(r, self.source, self.sink, self.graph_idx_to_node_idx,
-                         self.node_idx_to_graph_idx, self.most_pos_per_layer,
-                         self.n_layers, layer, neuron, k)
+        return _top_k_dag_paths(r, self.source, self.sink, self.graph_idx_to_node_idx,
+                                self.node_idx_to_graph_idx, self.most_pos_per_layer,
+                                self.n_layers, layer, neuron, k, all_disjoint=all_disjoint)

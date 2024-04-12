@@ -22,18 +22,21 @@ def get_weighting_for_layer(layer: int, n_layers: int, weight_decay=0.8, peak_at
     for i in range(layer):
         if peak_at_layer_only:
             r[i] = 1e-5
-        else: r[i] = G ** (layer - i)
+        else:
+            r[i] = G ** (layer - i)
     for i in range(layer + 1, n_layers):
         if peak_at_layer_only:
             r[i] = 1e-5
-        else: r[i] = G ** (i - layer)
+        else:
+            r[i] = G ** (i - layer)
         # r[i] = 0.0001
     # TODO: THE LAST LAYER SEEMS TO SELECTIVE... we need a smarter way of doing things than simply choosing highest
     # if layer != n_layers - 1:
         # r[-1] = 0.0
     r[layer] = 1
     return r
-    
+
+
 def top_k_dag_paths_dynamic(layers: List[List[List[float]]], k: int, top_layer: int = None):
     n_to_top_layer = len(layers[-1][0])
     layers = layers + [
@@ -182,6 +185,7 @@ def cosine_similarity_with_metric(a: npt.NDArray, b: npt.NDArray, metric: npt.ND
 #     mi = 0.5 * g / c_xy.sum()
 #     return mi
 
+
 def pairwise_pearson_coefficient_abs(A: npt.NDArray, B: npt.NDArray, eps=1e-8):
     """
     Compute the pairwise Absolute Value of the Pearson Correlation Coefficient between two matrices of features.
@@ -214,13 +218,15 @@ def pairwise_pearson_coefficient_abs(A: npt.NDArray, B: npt.NDArray, eps=1e-8):
     # Finally compute Pearson Correlation Coefficient as 2D array
     # print("DIVIDING BY", np.sqrt(p4*p3[:, None]))
     pcorr = ((p1 - p2) / (np.sqrt(p4*p3[:, None]) + eps))
-    return np.abs(pcorr)
+    return pcorr * (pcorr > 0)
+    # return np.abs(pcorr) # TODO: BETTER EXPLAIN FOR WHY ONLY POS
+
 
 def restrict_to_related_vertex(lattice: List[npt.NDArray], layer: int, idx: int) -> List[npt.NDArray]:
     bellow = [] if layer < 2 else lattice[0:layer-1]
     prior = [] if layer == 0 else [lattice[layer-1][:, idx:idx+1]]
     above = [] if layer >= len(lattice) - 1 else lattice[layer+1:]
     curr = [] if layer == len(lattice) else [lattice[layer][idx:idx+1]]
-    # print(bellow[0].shape, prior[0].shape, 
+    # print(bellow[0].shape, prior[0].shape,
     # print(bellow[0].shape, prior[0].shape, curr[0].shape, above[0].shape, len(above))
     return bellow + prior + curr + above

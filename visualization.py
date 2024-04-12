@@ -17,8 +17,12 @@ type LayerFeatures = { [layer: number]: BasisDescription[] }[];
 
 
 def _get_all_feat_path(layer: int): return f"visualizer/neuron-visualizer/src/lib/db/per_layer/{layer}/features.json"
+def _get_feat_idx_path(layer: int, featIdx: int): return f"visualizer/neuron-visualizer/src/lib/db/per_layer/{layer}/f{featIdx}.json"
 
 def add_to_feature_path(layer: int, feature_path: List[List[int]]):
+    """
+        Return the new feature index
+    """
     as_feature_descr = {l: [
         {
             "basis": feat // 2,
@@ -36,6 +40,21 @@ def add_to_feature_path(layer: int, feature_path: List[List[int]]):
         all_feats: List = json.load(fp)
         all_feats.append(as_feature_descr)
         json.dump(all_feats, fp)
+    return len(all_feats) - 1
+
+def add_feature_tops(layer: int, feature_idx: int, tokens: List[List[str]], activations: List[List[float]]):
+    f = _get_all_feat_path(layer)
+    with open(f, "r") as fp:
+        all_feats: List = json.load(fp)
+    feat = all_feats[feature_idx]
+    f = _get_feat_idx_path(layer, feature_idx)
+    with open(f, "w+") as fp:
+        d = {
+            "feature": feat,
+            "tokens": tokens,
+            "activations": activations 
+        }
+        json.dump(d, fp)
 
 # TODO: use meta tage
 
