@@ -4,6 +4,7 @@ import networkx as nx
 import numpy as np
 import numpy.typing as npt
 import utils
+import kernel
 
 Face = Tuple[float, List[int]]
 
@@ -38,11 +39,18 @@ def _calc_across_layer_sim_score(clique_lower: Face,
 
     We are looking for the **average** weight across the edges. This way, large cliques are not advantaged
     """
-    total_corr = 0.0
+    total_corr = 1.0
     for cl in clique_lower[1]:
         for cu in clique_upper[1]:
-            total_corr += inter_layer_corr[cl, cu]
-    return total_corr / (len(clique_lower[1] * len(clique_upper[1])))
+            total_corr *= inter_layer_corr[cl, cu]
+    if total_corr == 0.0: return 0.0
+    assert total_corr > 0.0
+    n_conns = len(clique_lower[1] * len(clique_upper[1]))
+    # Get the *GEOMETRIC* average connection weight
+    r = total_corr ** (1 / n_conns)
+    # print(r)
+    return r
+    # return total_corr / (len(clique_lower[1] * len(clique_upper[1])))
 
 
 def _sparsity_correlation_graph(G: nx.Graph, keep_neighbs_upper: int):
@@ -58,14 +66,20 @@ def _sparsity_correlation_graph(G: nx.Graph, keep_neighbs_upper: int):
         # print(edges, cutoff)
         to_remove = [edge for edge in edges if weight_attrs[edge] < cutoff]
 
-        # I LOVE DEI
-        (G.remove_edge(edge) for edge in to_remove)
+        # G.remove_edge(
+        for e in to_remove:
+            G.remove_edge(*e)
+        # (G.remove_edge(*edge) for edge in to_remove)
+    d = [k[1] for k in G.degree()]
+    # print("MAX DEG", max(list(d)))
     return G
 
 
 def find_high_weight_faces(correlations: npt.NDArray[2],
-                           n_cliques_per_vertex=3, n_search_per_vertex=100,
-                           upper_neighbs = 4,
+                           layer_activations: npt.NDArray[2],
+                           n_cliques_per_vertex=3, n_search_per_vertex=200,
+                           n_max_collect_per_vertex=10,
+                           upper_neighbs = 50,  # TODO: Find right param
                            correlation_cutoff=0.09) -> List[Face]:  # TODO: what is the right correlation cutoff? Somehow we want to **encourage** sparsity. Of course this is like layer dependent. Maybe we do something like only keep top K neighbors of every node
     """
     Find the high weight cliques within a layer's correlation graph.
@@ -83,14 +97,29 @@ def find_high_weight_faces(correlations: npt.NDArray[2],
     G = _sparsity_correlation_graph(G, upper_neighbs)
 
     for N in range(n_nodes):
-        # print("Getting clique centered at", N)
+        print("Getting clique centered at", N)
         cliques_per_node.append([])
         y = nx.find_cliques(G, nodes=[N])
         for i, conns in enumerate(y):
-            # print(conns)
-            cliques_per_node[-1].append(conns)
+
+            # TODO: BATCH?
+            # TODO: BATCH HELPER FUNC!!
+            prods = np.ones(layer_activations.shape[0])
+            # Check if the clique has support on layer_activations
+            for n in conns:
+                prods *= kernel.feature_prob(layer_activations, n)
+            
+            # TODO: only supp on 1??
+            # print("T", conns, prods.sum())
+            if np.any(prods > 0):
+                # print("FOUND 1")
+                cliques_per_node[-1].append(conns)
+
+            if len(cliques_per_node[-1]) >= n_max_collect_per_vertex:
+                break
             if i >= n_search_per_vertex:
                 break
+        print(f"Centered at {N} has {len(cliques_per_node[-1])} supported cliques")
 
     # Get top cliques per node
     top_cliques_per_node: List[Face] = []

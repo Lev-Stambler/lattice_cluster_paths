@@ -41,7 +41,7 @@ def _inner_product_pos_only(x, features, kernel_width=None):
     r = (features @ np.swapaxes(x, -1, -2)).squeeze(axis=-1)
     return r * (r > 0)
 
-def make_kernel_feat(n_dims: int):
+def _make_kernel_feat(n_dims: int):
     global _kernel_feat
     if _kernel_feat is not None:
         return _kernel_feat
@@ -64,7 +64,7 @@ def feature_prob(x: npt.NDArray, feature_idx: int, kernel_width=0.01):
     return multed * (multed > 0)
     # x = _check_size(x)
     # return x
-    kern = make_kernel_feat(x.shape[-1])
+    kern = _make_kernel_feat(x.shape[-1])
 
     # v = -1 if feature_idx % 2 == 1 else 1
     # inner = np.zeros((1, 1, x.shape[-1] * 2))
@@ -81,7 +81,7 @@ def predict_proba(x: npt.NDArray, batch_size=-1, kernel_width=0.01):
 
     x = _check_size(x)
     n_dims = x.shape[-1]
-    features = make_kernel_feat(n_dims)
+    features = _make_kernel_feat(n_dims)
 
     if batch_size > 0:
         out = np.zeros((x.shape[0], features.shape[1]))
