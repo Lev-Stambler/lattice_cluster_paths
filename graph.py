@@ -1,4 +1,5 @@
 import networkx as nx
+import time
 from typing import List, Tuple, Dict
 import numpy.typing as npt
 import numpy as np
@@ -20,6 +21,7 @@ def _to_nx_graph(cluster_scores: List[npt.NDArray], fix_weighting=True, weightin
     G = nx.DiGraph()
     graph_idx_to_node_idx = [{}]
     node_idx_to_graph_idx = [{}]
+    # TODO: IS THERE A FASTER WAY TO DO THIS??? I THINK SO!
     for layer in range(len(cluster_scores)):
         # Append the next layer
         graph_idx_to_node_idx.append({})
@@ -61,26 +63,29 @@ def _to_nx_graph(cluster_scores: List[npt.NDArray], fix_weighting=True, weightin
     return G, source, sink, graph_idx_to_node_idx, node_idx_to_graph_idx, most_pos_per_layer
 
 
-def top_k_dag_paths(layers: List[npt.NDArray[2]], layer: int, neuron: int, k: int,
-                    weighting_per_edge: List[float] = None, corr_cutoff=0.01, exclude_set={}, all_disjoint=False):
-    if weighting_per_edge is None:
-        weighting_per_edge = [1.0 for _ in layers]
-    # TODO: we no longer have to remake these graphs. One and done
-    r = utils.restrict_to_related_vertex(layers, layer, neuron)
-    graph, source, sink, graph_layers_to_idx, \
-        node_layers_to_graph, most_pos_per_layer = _to_nx_graph(
-            r, weighting_per_edge=weighting_per_edge, corr_cutoff=corr_cutoff)
+def _top_k_dag_paths(
+    graph, source, sink, graph_layers_to_idx, node_layers_to_graph, most_pos_per_layer,
+    n_layers: int, layer: int, neuron: int, k: int,
+    # layers: List[npt.NDArray[2]], layer: int, neuron: int, k: int,
+        exclude_set={}, all_disjoint=False):
+    start = time.time()
+    # r = utils.restrict_to_related_vertex(layers, layer, neuron)
+    # graph, source, sink, graph_layers_to_idx, \
+    #     node_layers_to_graph, most_pos_per_layer = _to_nx_graph(
+    #         r, corr_cutoff=corr_cutoff)
 
     for rm_layer in exclude_set.keys():
         for node in exclude_set[rm_layer]:
             print("Removing", rm_layer, node,
                   node_layers_to_graph[rm_layer][node])
             graph.remove_node(node_layers_to_graph[rm_layer][node])
+    print("Time spent building graph", time.time() - start)
+    start = time.time()
 
     X = nx.shortest_simple_paths(graph, source, sink, weight='weight')
     paths = []
 
-		# TODO: sep fn
+    # TODO: sep fn
     if all_disjoint:
         print("Looking for disjoint paths")
         for path_try in range(k):
@@ -99,24 +104,25 @@ def top_k_dag_paths(layers: List[npt.NDArray[2]], layer: int, neuron: int, k: in
             # print("PATH NO SINK", path_no_sink)
             path_node_idx = [graph_layers_to_idx[i][node]
                              for i, node in enumerate(path_no_endpoints)]
-            assert len(path_node_idx) == len(layers) + 1
+            assert len(path_node_idx) == n_layers
             path_node_idx[layer] = neuron
 
             recovered_weight = sum([
-                -1 * weighting_per_edge[i] * (graph[path_no_endpoints[i]][path_no_endpoints[i + 1]]['weight'] / GRAPH_SCALING_RESOLUTION
-                                              - most_pos_per_layer[i])
+                -1 * (graph[path_no_endpoints[i]][path_no_endpoints[i + 1]]['weight'] / GRAPH_SCALING_RESOLUTION
+                      - most_pos_per_layer[i])
                 for i in range(0, len(path_no_endpoints) - 1)])
 
             paths.append((path_node_idx, recovered_weight))
             print(paths[-1])
 
-            path_no_layer = path_no_endpoints[:layer] + [] if layer == len(
-                layers) else path_no_endpoints[layer + 1:]
+            path_no_layer = path_no_endpoints[:layer] + \
+                [] if layer == n_layers - 1 else path_no_endpoints[layer + 1:]
             # print("Removing", path_no_layer)
             for n in path_no_layer:
                 graph.remove_node(n)
-            
+
             X = nx.shortest_simple_paths(graph, source, sink, weight='weight')
+        print("Time spent on getting disjoint", time.time() - start)
         return paths
 
     for counter, path in enumerate(X):
@@ -127,17 +133,17 @@ def top_k_dag_paths(layers: List[npt.NDArray[2]], layer: int, neuron: int, k: in
         # print("PATH NO SINK", path_no_sink)
         path_node_idx = [graph_layers_to_idx[i][node]
                          for i, node in enumerate(path_no_endpoints)]
-        assert len(path_node_idx) == len(layers) + 1
+        assert len(path_node_idx) == n_layers
         path_node_idx[layer] = neuron
 
         recovered_weight = sum([
-            -1 * weighting_per_edge[i] * (graph[path_no_endpoints[i]][path_no_endpoints[i + 1]]['weight'] / GRAPH_SCALING_RESOLUTION
-                                          - most_pos_per_layer[i])
+            -1 * (graph[path_no_endpoints[i]][path_no_endpoints[i + 1]]['weight'] / GRAPH_SCALING_RESOLUTION
+                  - most_pos_per_layer[i])
             for i in range(0, len(path_no_endpoints) - 1)])
 
         paths.append((path_node_idx, recovered_weight))
         print(paths[-1])
-       
+
         if counter == k-1:
             break
     return paths
@@ -218,3 +224,34 @@ def get_feature_paths(lattice, layer: int, neuron: int, k_search=20,
     paths_distinct = cluster_similar_paths()
     path_reps = [searched_paths[p[0]] for p in paths_distinct]
     return path_reps
+
+
+class GraphOfCorrs:
+    G: nx.Graph
+    source: int
+    sink: int
+    graph_idx_to_node_idx: List[Dict[int, int]]
+    node_idx_to_graph_idx: List[Dict[int, int]]
+    most_pos_per_layer: List[int]
+    n_layers: int
+    corr_cutoff: int
+
+    def __init__(self, layers: List[npt.NDArray[2]], corr_cutoff=0.1) -> None:
+        self.G, self.source, self.sink, self.graph_idx_to_node_idx, \
+            self.node_idx_to_graph_idx, self.most_pos_per_layer \
+            = _to_nx_graph(layers, corr_cutoff=corr_cutoff)
+        self.n_layers = len(layers) + 1
+        self.corr_cutoff = corr_cutoff
+
+    def _restrict_g_to_neuron(self, layer: int, neuron: int) -> nx.Graph:
+        new_g = self.G.copy()
+        for n in self.node_idx_to_graph_idx[layer].keys():
+            if n != neuron:
+                new_g.remove_node(self.node_idx_to_graph_idx[layer][n])
+        return new_g
+
+    def get_top_k_paths(self, layer: int, neuron: int, k: int):
+        r = self._restrict_g_to_neuron(layer, neuron)
+        _top_k_dag_paths(r, self.source, self.sink, self.graph_idx_to_node_idx,
+                         self.node_idx_to_graph_idx, self.most_pos_per_layer,
+                         self.n_layers, layer, neuron, k)

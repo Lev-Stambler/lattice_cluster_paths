@@ -27,8 +27,12 @@ def _get_avg_clique_weight(weight_attrs, face: List[int]):
             o = [face[i], face[j]]
             o.sort()
             o = tuple(o)
-            total_weight += weight_attrs[o]
-    return total_weight / (total_cons ** 2)
+            total_weight *= weight_attrs[o]
+
+    if total_weight == 0.0: return 0.0
+    assert total_weight > 0.0
+    return total_weight ** (1 / total_cons)
+    # return total_weight / (total_cons)
 
 
 def _calc_across_layer_sim_score(clique_lower: Face,
@@ -77,7 +81,7 @@ def _sparsity_correlation_graph(G: nx.Graph, keep_neighbs_upper: int):
 
 def find_high_weight_faces(correlations: npt.NDArray[2],
                            layer_activations: npt.NDArray[2],
-                           n_cliques_per_vertex=3, n_search_per_vertex=200,
+                           n_cliques_per_vertex=5, n_search_per_vertex=200,
                            n_max_collect_per_vertex=10,
                            upper_neighbs = 50,  # TODO: Find right param
                            correlation_cutoff=0.09) -> List[Face]:  # TODO: what is the right correlation cutoff? Somehow we want to **encourage** sparsity. Of course this is like layer dependent. Maybe we do something like only keep top K neighbors of every node
