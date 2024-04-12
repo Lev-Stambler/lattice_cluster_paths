@@ -115,7 +115,7 @@ def _top_k_dag_paths(
             print(paths[-1])
 
             path_no_layer = path_no_endpoints[:layer] + \
-                [] if layer == n_layers - 1 else path_no_endpoints[layer + 1:]
+                ([] if layer == n_layers - 1 else path_no_endpoints[layer + 1:])
             # print("Removing", path_no_layer)
             for n in path_no_layer:
                 graph.remove_node(n)

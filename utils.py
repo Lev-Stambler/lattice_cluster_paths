@@ -218,8 +218,8 @@ def pairwise_pearson_coefficient_abs(A: npt.NDArray, B: npt.NDArray, eps=1e-8):
     # Finally compute Pearson Correlation Coefficient as 2D array
     # print("DIVIDING BY", np.sqrt(p4*p3[:, None]))
     pcorr = ((p1 - p2) / (np.sqrt(p4*p3[:, None]) + eps))
-    return pcorr * (pcorr > 0)
-    # return np.abs(pcorr) # TODO: BETTER EXPLAIN FOR WHY ONLY POS
+    # return pcorr * (pcorr > 0)
+    return np.abs(pcorr) # TODO: BETTER EXPLAIN FOR WHY ONLY POS
 
 
 def restrict_to_related_vertex(lattice: List[npt.NDArray], layer: int, idx: int) -> List[npt.NDArray]:
