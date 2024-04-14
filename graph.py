@@ -80,7 +80,6 @@ def _top_k_dag_paths(
             graph.remove_node(node_layers_to_graph[rm_layer][node])
     start = time.time()
 
-    print(source, sink)
     X = nx.shortest_simple_paths(graph, source, sink, weight='weight')
     paths = []
 
