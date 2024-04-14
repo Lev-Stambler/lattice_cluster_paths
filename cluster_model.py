@@ -5,9 +5,9 @@ from typing import List, Union, Dict
 import numpy as np
 import numpy.typing as npt
 import torch
-import transformer_lens
 import kernel
 import metadata as paramslib
+from model import TransformerModel, forward_hooked_model, load_model
 import utils
 import visualization
 import graph
@@ -16,6 +16,7 @@ import json
 from metadata import InterpParams, LatticeParams
 
 DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+# DEFAULT_DEVICE = 'cpu' if torch.cuda.is_available() else 'cpu'
 
 
 def get_top_scores(self, dataset: List[str], path: List[int],
@@ -46,24 +47,7 @@ def get_top_scores(self, dataset: List[str], path: List[int],
 # TODO: by different model parameterize?
 
 
-def get_block_base_label(i): return f'blocks.{i}'
-
-
-def get_block_out_label(i): return f'{get_block_base_label(i)}.hook_resid_post'
-
-
-def forward_on_block(model, block_idx: int, data: npt.NDArray):
-    ret = model.blocks[block_idx](torch.tensor(list(data)).unsqueeze(
-        0).unsqueeze(0).to(device=DEFAULT_DEVICE)).detach().cpu().numpy()
-    return ret[0][0]
-
-
-def forward_pass(model_lens: transformer_lens.HookedTransformer, t: str, layer: str) -> torch.Tensor:
-    with torch.no_grad():
-        return model_lens.run_with_cache(t)[1][layer]
-
-
-def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, dataset: Dataset, layers: List[str], params: paramslib.InterpParams, use_save=True) -> List[npt.NDArray]:
+def get_layers_emb_dataset(model: TransformerModel, dataset: Dataset, layers: List[int], params: paramslib.InterpParams, use_save=True) -> List[npt.NDArray]:
 
     all_finished = params.get_and_prepare_data_save_tag('all_finished_embd')
 
@@ -91,7 +75,8 @@ def get_layers_emb_dataset(model_lens: transformer_lens.HookedTransformer, datas
             top_idx = min(t + BS, len(dataset))
             d = dataset[t:top_idx]
             # torch.cuda.empty_cache()
-            outs = model_lens.run_with_cache(d)[1]
+            outs = forward_hooked_model(model, d)[1]
+
             for i, l in enumerate(layers):
                 tens = outs[l]
                 all_outs[i] += list(tens.cpu().numpy().reshape(-1,
@@ -159,7 +144,7 @@ def cluster_model_lattice(ds: List[npt.NDArray], params: paramslib.InterpParams)
     print("Set all probs with predictions")
 
     def score_cluster_to_next(curr_layer_idx: int, next_layer_idx: int) -> List[float]:
-        coeffs = utils.pairwise_pearson_coefficient_abs(
+        coeffs = utils.pairwise_correlation_metric(
             probs_for_all_layers[curr_layer_idx], probs_for_all_layers[next_layer_idx])
         print("COEFF STUFF", probs_for_all_layers[curr_layer_idx].max(), probs_for_all_layers[curr_layer_idx].min(),
               coeffs.shape, coeffs.min(), coeffs.max())
@@ -235,26 +220,6 @@ def log_score_tokens_for_path(embd_dataset: List[npt.NDArray],
     return ret_scores
 
 
-def get_transformer(name: str, quantization: str = None, device=DEFAULT_DEVICE):
-    """
-    Get the transformer model from the name
-    """
-    # tokenizer = AutoTokenizer.from_pretrained(name)
-    if quantization is None:
-        model = transformer_lens.HookedTransformer.from_pretrained(
-            name).to(device)
-    elif quantization == '8bit':
-        model = transformer_lens.HookedTransformer.from_pretrained(
-            name, load_in_8bit=True).to(device)
-    elif quantization == '4bit':
-        model = transformer_lens.HookedTransformer.from_pretrained(
-            name, load_in_4bit=True).to(device)
-    else:
-        raise ValueError("Expected either no quantization or 8bit or 4bit")
-    tokenizer = model.tokenizer
-    return model, tokenizer
-
-
 def get_dataset(name: str):
     """
     Get the dataset from the name
@@ -286,7 +251,7 @@ def correlate_internal_to_layer(embeds: List[npt.NDArray], params: InterpParams,
         ).T
 
         print("Computing internal correlations for layer", layer)
-        corrs = utils.pairwise_pearson_coefficient_abs(
+        corrs = utils.pairwise_correlation_metric(
             prob_for_layer, prob_for_layer)
         print(layer, "corrs shape", corrs.shape)
         if use_saved:
@@ -309,17 +274,20 @@ class Decomposer:
     # TODO: THERE IS STILL A PROBLEM WHERE WE REALLY AREN'T LOOKING AT TOTAL CORRELATION THROUGH THINGS...
 
     def __init__(self, params: paramslib.InterpParams,
+                 device=DEFAULT_DEVICE,
                  n_max_features_per_neuron=6):
         torch.manual_seed(params.seed)
         np.random.seed(params.seed)
+        self.device = device
 
         ds = get_dataset(params.dataset_name)
-        model, _ = get_transformer(params.model_name)
-        self.model_lens = model
+        model = load_model(params.model_name, device=device,
+                              quantization=params.quantization)
+        self.model = model
         shuffled = ds.shuffle(seed=params.seed)[
             'train'][:params.n_datasize]['text']
         dataset = shuffled
-        layers = [get_block_out_label(i) for i in range(params.n_blocks)]
+        layers = [i for i in range(params.n_blocks)]
         self.params = params
         print(
             f"Creating decomposer with parameter data hash {params.get_and_prepare_data_save_tag('start')}")
@@ -335,9 +303,8 @@ class Decomposer:
         print("Created dataset")
         self.layers = layers
         self.correlation_scores = None
-        self.labs = [get_block_out_label(i) for i in range(params.n_blocks)]
         self.ds_emb = get_layers_emb_dataset(
-            self.model_lens, self.dataset, self.labs, params=self.params, use_save=True)
+            self.model, self.dataset, self.layers, params=self.params, use_save=True)
         self.n_features_per_neuron = n_max_features_per_neuron
         print("Got embeddings")
 
@@ -351,12 +318,12 @@ class Decomposer:
     def _get_ds_metadata(self, ds: List[str], embeds: npt.NDArray = None):
         if embeds is None:
             embeds = get_layers_emb_dataset(
-                self.model_lens, ds, self.layers, params=self.params, use_save=False)
+                self.model, ds, self.layers, params=self.params, use_save=False)
         token_to_original_ds = []
         token_to_pos_original_ds = []
 
         for i, d in enumerate(ds):
-            tokenized = self.model_lens.to_tokens(d)[0]
+            tokenized = self.model.to_tokens(d)[0]
             # print(tokenized)
             # return
             for j in range(len(tokenized)):

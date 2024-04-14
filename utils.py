@@ -2,10 +2,11 @@ from typing import List, Dict, Tuple
 from scipy.stats import chi2_contingency
 import torch
 import numpy as np
-from einops import rearrange
 import networkx as nx
 import heapq
 import numpy.typing as npt
+from sklearn.metrics import mutual_info_score
+
 # TODO: this is just a c and p rn
 
 # Get the activations for the best dict features
@@ -186,6 +187,29 @@ def cosine_similarity_with_metric(a: npt.NDArray, b: npt.NDArray, metric: npt.ND
 #     return mi
 
 
+# def get_mutual_info(A: npt.NDArray, B: npt.NDArray):
+#     mutual_info_regression(
+
+
+def pairwise_mutual_information(A: npt.NDArray, B: npt.NDArray):
+    # Number of rows in the matrix
+    n_rows = A.shape[0]
+    
+    # Initialize a 2D array to store mutual information values
+    mi_matrix = np.zeros((n_rows, n_rows))
+    
+    # Compute pairwise mutual information
+    for i in range(n_rows):
+        for j in range(i + 1, n_rows):
+            # Compute mutual information between row i and row j
+            mi = mutual_info_score(A[i], B[j])
+            
+            # Store the value in the matrix
+            mi_matrix[i, j] = mi
+            mi_matrix[j, i] = mi
+    
+    return mi_matrix
+
 def pairwise_pearson_coefficient_abs(A: npt.NDArray, B: npt.NDArray, eps=1e-8):
     """
     Compute the pairwise Absolute Value of the Pearson Correlation Coefficient between two matrices of features.
@@ -221,6 +245,9 @@ def pairwise_pearson_coefficient_abs(A: npt.NDArray, B: npt.NDArray, eps=1e-8):
     # return pcorr * (pcorr > 0)
     return np.abs(pcorr) # TODO: BETTER EXPLAIN FOR WHY ONLY POS
 
+# TODO: SEP FILE
+def pairwise_correlation_metric(A: npt.NDArray, B: npt.NDArray):
+    return pairwise_mutual_information(A, B)
 
 def restrict_to_related_vertex(lattice: List[npt.NDArray], layer: int, idx: int) -> List[npt.NDArray]:
     bellow = [] if layer < 2 else lattice[0:layer-1]

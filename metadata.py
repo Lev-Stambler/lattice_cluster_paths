@@ -26,7 +26,7 @@ class InterpParams:
     string_size_cutoff: int
     n_datasize: int
     seed: int
-    # quantization: str = None
+    quantization: str = None
 
     lattice: LatticeParams
 
@@ -39,7 +39,7 @@ class InterpParams:
         return {
             'seed': self.seed,
             # TODO: quantization would be nice but we are not quite there yet...
-            # 'quantization': self.quantization,
+            'quantization': self.quantization,
             'n_datasize': self.n_datasize,
             'n_blocks': self.n_blocks,
             'string_size_cutoff': self.string_size_cutoff,
