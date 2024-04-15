@@ -2,3 +2,5 @@
 *.pyc
 built_vis_cite
 *.pkl
+*.npy
+*.gpickle

@@ -11,7 +11,7 @@ Face = Tuple[float, List[int]]
 
 # TODO: GEOMETRIC OR ARITHMETIC!!!???
 def _get_avg_clique_weight(weight_attrs, face: List[int]):
-    total_weight = 0
+    total_weight = 1
     total_cons = 0
     # print(face)
     # TODO: IDEALLY WE NEVER FACE THIS!!
@@ -28,6 +28,7 @@ def _get_avg_clique_weight(weight_attrs, face: List[int]):
             o = [face[i], face[j]]
             o.sort()
             o = tuple(o)
+            # print(weight_attrs[o])
             total_weight *= weight_attrs[o]
 
     if total_weight == 0.0: return 0.0
@@ -100,6 +101,7 @@ def find_high_weight_faces(correlations: npt.NDArray[2],
         corrs_cutoff[i, i] = 0
     G = nx.from_numpy_array(corrs_cutoff)#, edge_attr='weight')
     G = _sparsity_correlation_graph(G, upper_neighbs)
+    weight_attrs = nx.get_edge_attributes(G, 'weight')
 
     for N in range(n_nodes):
         print("Getting clique centered at", N)
@@ -120,6 +122,7 @@ def find_high_weight_faces(correlations: npt.NDArray[2],
                 # print("FOUND 1")
                 cliques_per_node[-1].append(conns)
 
+            # _get_avg_clique_weight(weight_attrs, cliques_per_node[-1][-1])
             if len(cliques_per_node[-1]) >= n_max_collect_per_vertex:
                 break
             if i >= n_search_per_vertex:
@@ -128,7 +131,6 @@ def find_high_weight_faces(correlations: npt.NDArray[2],
 
     # Get top cliques per node
     top_cliques_per_node: List[Face] = []
-    weight_attrs = nx.get_edge_attributes(G, 'weight')
     for node, cliques in enumerate(cliques_per_node):
         top_cliques_per_node.append([])
         # print("Looking at node", node)
@@ -138,7 +140,8 @@ def find_high_weight_faces(correlations: npt.NDArray[2],
         tops = np.argsort(weights)[::-1]
         n = min(len(tops), n_cliques_per_vertex)
         for i in range(n):
-            # print(tops[i], cliques[tops[i]], weights[tops[i]])
+            # print(tops[i], cliques[tops[i]], weights[tops[i]]) # TODO: ideally with the right metric its not even a per node thing
+            # print(weights[tops[i]])
             top_cliques_per_node[-1].append((weights[tops[i]],
                                             cliques[tops[i]]))
 
