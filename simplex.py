@@ -98,7 +98,7 @@ def find_high_weight_faces(correlations: npt.NDArray[2],
     n_nodes = correlations.shape[0]
     for i in range(len(corrs_cutoff)):
         corrs_cutoff[i, i] = 0
-    G = nx.from_numpy_array(corrs_cutoff, edge_attr='weight')
+    G = nx.from_numpy_array(corrs_cutoff)#, edge_attr='weight')
     G = _sparsity_correlation_graph(G, upper_neighbs)
 
     for N in range(n_nodes):

@@ -191,24 +191,50 @@ def cosine_similarity_with_metric(a: npt.NDArray, b: npt.NDArray, metric: npt.ND
 #     mutual_info_regression(
 
 
-def pairwise_mutual_information(A: npt.NDArray, B: npt.NDArray):
-    # Number of rows in the matrix
-    n_rows = A.shape[0]
+# TODO: smarter` cutoff per row. BUT QUANTIZATION!
+# TODO: this can be made wayyyy faster...
+def pairwise_signaling(A: npt.NDArray[2], B: npt.NDArray[2], cutoff_per_row=0.001):
+    print(A.shape, B.shape)
+    assert len(B.shape) == len(A.shape) == 2, "Expected a matrix"
+    assert A.shape[1] == B.shape[1], "Expected the same number of samples"
+    A = A > cutoff_per_row
+    B = B > cutoff_per_row
+    n_rows_A = A.shape[0]
+    n_rows_B = B.shape[0]
+    signaling = np.zeros((n_rows_A, n_rows_B))
+    # n_items = A.shape[1]
+    # prob_row = signaling.sum(axis=-1) / n_items
+
+    for i in range(n_rows_A):
+        for j in range(n_rows_B):
+            # Look at 
+            p_i_and_j = np.logical_and(A[i], B[j])
+            # TODO: hrmm min gives commutativity but we may not want this
+            p_i_j_min = min(A[i].sum(), B[j].sum())
+            if p_i_j_min > 0:
+                signaling[i, j] = p_i_and_j.sum() / p_i_j_min
+    return signaling
+
+
+# (A: npt.NDArray, B: npt.NDArray):
+#     # Number of rows in the matrix
+#     n_rows = A.shape[0]
     
-    # Initialize a 2D array to store mutual information values
-    mi_matrix = np.zeros((n_rows, n_rows))
+#     # Initialize a 2D array to store mutual information values
+#     mi_matrix = np.zeros((n_rows, n_rows))
     
-    # Compute pairwise mutual information
-    for i in range(n_rows):
-        for j in range(i + 1, n_rows):
-            # Compute mutual information between row i and row j
-            mi = mutual_info_score(A[i], B[j])
+#     # Compute pairwise mutual information
+#     for i in range(n_rows):
+#         for j in range(i + 1, n_rows):
+#             # Compute mutual information between row i and row j
+#             mi = mutual_info_score(A[i], B[j])
+#             print(mi)
             
-            # Store the value in the matrix
-            mi_matrix[i, j] = mi
-            mi_matrix[j, i] = mi
+#             # Store the value in the matrix
+#             mi_matrix[i, j] = mi
+#             mi_matrix[j, i] = mi
     
-    return mi_matrix
+#     return mi_matrix
 
 def pairwise_pearson_coefficient_abs(A: npt.NDArray, B: npt.NDArray, eps=1e-8):
     """
@@ -247,7 +273,8 @@ def pairwise_pearson_coefficient_abs(A: npt.NDArray, B: npt.NDArray, eps=1e-8):
 
 # TODO: SEP FILE
 def pairwise_correlation_metric(A: npt.NDArray, B: npt.NDArray):
-    return pairwise_mutual_information(A, B)
+    return pairwise_signaling(A, B)
+    # return pairwise_mutual_information(A, B)
 
 def restrict_to_related_vertex(lattice: List[npt.NDArray], layer: int, idx: int) -> List[npt.NDArray]:
     bellow = [] if layer < 2 else lattice[0:layer-1]

@@ -139,7 +139,7 @@ def cluster_model_lattice(ds: List[npt.NDArray], params: paramslib.InterpParams)
         ds_mmep[:] = ds[i]
         print("Set dataset for layer", i, "Getting proba")
         probs_for_all_layers[i][:] = kernel.predict_proba(
-            ds_mmep, batch_size=2_048).T
+            ds_mmep, batch_size=2_048 * 8).T
         print("Set predictions for layer", i)
     print("Set all probs with predictions")
 
