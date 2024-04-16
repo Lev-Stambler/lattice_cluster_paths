@@ -8,7 +8,10 @@ import utils
 GRAPH_SCALING_RESOLUTION = 100_000
 
 
-def _to_nx_graph(cluster_scores: List[npt.NDArray], fix_weighting=True, weighting_per_edge=None, corr_cutoff=None):
+def _to_nx_graph(cluster_scores: List[npt.NDArray],
+                 fix_weighting=True, weighting_per_edge=None, corr_cutoff=None,
+                 max_neighbors_per_edge=None
+                 ):
     node_idx = 0
     assert weighting_per_edge is None or len(weighting_per_edge) == len(
         cluster_scores), "Need a weight for each edge from prior layer to next"
@@ -23,15 +26,29 @@ def _to_nx_graph(cluster_scores: List[npt.NDArray], fix_weighting=True, weightin
     node_idx_to_graph_idx = [{}]
     # TODO: IS THERE A FASTER WAY TO DO THIS??? I THINK SO!
     for layer in range(len(cluster_scores)):
+        print("STARTING LAYER", layer)
         # Append the next layer
         graph_idx_to_node_idx.append({})
         node_idx_to_graph_idx.append({})
         layer_start_idx = node_idx
         n_in_layer = len(cluster_scores[layer])
-        for i, node_cs in enumerate(cluster_scores[layer]):
+        for i, node_corrs in enumerate(cluster_scores[layer]):
             graph_idx_to_node_idx[layer][node_idx] = i
             node_idx_to_graph_idx[layer][i] = node_idx
-            for j, c in enumerate(node_cs):
+
+            # We add all the edges. For the last layer, we add every edge
+            # because, empirically, it seems as though correlations are not really "felt"
+            # in the last layer
+            if not max_neighbors_per_edge or layer == len(cluster_scores) - 1:
+                nodes_zipped = zip(range(len(node_corrs)), node_corrs.tolist())
+            # We add only the top `max_neighbors_per_edge` edges
+            else:
+                highest_weight = np.argsort(
+                    node_corrs)[::-1][:max_neighbors_per_edge]
+                nodes_zipped = zip(highest_weight.tolist(),
+                                   node_corrs[highest_weight].tolist())
+
+            for j, c in nodes_zipped:
                 next_idx = layer_start_idx + n_in_layer + j
 
                 if fix_weighting:
@@ -49,6 +66,7 @@ def _to_nx_graph(cluster_scores: List[npt.NDArray], fix_weighting=True, weightin
                 if w > 0 and (corr_cutoff is None or c > corr_cutoff):
                     G.add_edge(node_idx, next_idx, weight=w)
             node_idx += 1
+        print("FINISHED LAYER", layer)
 
     sink = n_clusters
     source = n_clusters + 1
@@ -234,11 +252,12 @@ class GraphOfCorrs:
     n_layers: int
     corr_cutoff: int
 
-    def __init__(self, layers: List[npt.NDArray[2]], corr_cutoff=0.1) -> None:
+    def __init__(self, layers: List[npt.NDArray[2]], corr_cutoff=0.1, max_outgoing_for_feature=20) -> None:
         self.G, self.source, self.sink, self.graph_idx_to_node_idx, \
             self.node_idx_to_graph_idx, self.most_pos_per_layer \
-            = _to_nx_graph(layers, corr_cutoff=corr_cutoff)
+            = _to_nx_graph(layers, corr_cutoff=corr_cutoff, max_neighbors_per_edge=max_outgoing_for_feature)
         self.n_layers = len(layers) + 1
+        self.max_outgoing_for_feature = max_outgoing_for_feature
         self.corr_cutoff = corr_cutoff
 
     def _restrict_g_to_neuron(self, layer: int, neuron: int) -> nx.Graph:

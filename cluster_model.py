@@ -323,7 +323,7 @@ class Decomposer:
         token_to_pos_original_ds = []
 
         for i, d in enumerate(ds):
-            tokenized = self.model.to_tokens(d)[0]
+            tokenized = self.model[1](d)["input_ids"]
             # print(tokenized)
             # return
             for j in range(len(tokenized)):

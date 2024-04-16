@@ -86,7 +86,7 @@ def find_high_weight_faces(correlations: npt.NDArray[2],
                            n_cliques_per_vertex=5, n_search_per_vertex=200,
                            n_max_collect_per_vertex=10,
                            upper_neighbs = 50,  # TODO: Find right param
-                           correlation_cutoff=0.09) -> List[Face]:  # TODO: what is the right correlation cutoff? Somehow we want to **encourage** sparsity. Of course this is like layer dependent. Maybe we do something like only keep top K neighbors of every node
+                           correlation_cutoff=0.1) -> List[Face]:  # TODO: what is the right correlation cutoff? Somehow we want to **encourage** sparsity. Of course this is like layer dependent. Maybe we do something like only keep top K neighbors of every node
     """
     Find the high weight cliques within a layer's correlation graph.
     The return is a list of tuples corresponding to clique weight and the indices
