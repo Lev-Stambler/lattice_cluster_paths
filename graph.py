@@ -39,6 +39,7 @@ def _to_nx_graph(cluster_scores: List[npt.NDArray],
             # We add all the edges. For the last layer, we add every edge
             # because, empirically, it seems as though correlations are not really "felt"
             # in the last layer
+            # TODO: SOMETHING BETTER FOR LAST LAYER
             if not max_neighbors_per_edge or layer == len(cluster_scores) - 1:
                 nodes_zipped = zip(range(len(node_corrs)), node_corrs.tolist())
             # We add only the top `max_neighbors_per_edge` edges
