@@ -24,3 +24,12 @@ Its also not at all clear what makes a path a good "interoperability" path. We n
 
 Some smaller things
 - Use **normalization**? Should we do this?
+
+### Some cool paths
+
+Path: [[8, 713], [498, 645], [411, 312], [411, 553], [411, 312], [663]] (word preceeding to make things smaller/ larger etc)
+
+It also seems like using the last few layers to differentiate is crucuial as well
+Its not at all clear though how to do this...
+
+I have a feeling that we need to just get the highest average weight cliques and use those...
