@@ -71,7 +71,6 @@ def get_layers_emb_dataset(model: TransformerModel, dataset: Dataset, layers: Li
         BS = 1
         for t in range(0, len(dataset), BS):
             # if t % 200 == 0:
-            # print("ON", t)
             top_idx = min(t + BS, len(dataset))
             d = dataset[t:top_idx]
             # torch.cuda.empty_cache()
@@ -89,13 +88,9 @@ def get_layers_emb_dataset(model: TransformerModel, dataset: Dataset, layers: Li
         mmemap_name = mmat_file(l)
         out_np = np.memmap(mmemap_name, dtype='float32',
                            mode='w+', shape=(total_n_toks, params.model_n_dims))
-        # BS = 1_024 * 8
         BS = 8
         for i in range(0, total_n_toks, BS):
-            # if i % 200 == 0:
-            #     print("Numpy ON", i)
             top_idx = min(i + BS, total_n_toks)
-            # print("ON", i, top_idx, all_outs[l][i:top_idx])
             out_np[i:top_idx, :] = np.array(all_outs[l][i:top_idx])
         outs_np.append(out_np)
     print("Finished and saving to file\n")
@@ -146,8 +141,6 @@ def cluster_model_lattice(ds: List[npt.NDArray], params: paramslib.InterpParams)
     def score_cluster_to_next(curr_layer_idx: int, next_layer_idx: int) -> List[float]:
         coeffs = utils.pairwise_correlation_metric(
             probs_for_all_layers[curr_layer_idx], probs_for_all_layers[next_layer_idx])
-        print("COEFF STUFF", probs_for_all_layers[curr_layer_idx].max(), probs_for_all_layers[curr_layer_idx].min(),
-              coeffs.shape, coeffs.min(), coeffs.max())
         return coeffs
 
     cluster_scores = []
@@ -158,15 +151,12 @@ def cluster_model_lattice(ds: List[npt.NDArray], params: paramslib.InterpParams)
         # TODO: into sparse matrix and then list??
         cluster_scores.append(scores_to_next)
 
-    print("CLUSTER SCORES", cluster_scores)
     pickle.dump(cluster_scores, open(save_name, 'wb'))
     return cluster_scores
 
 
 def cutoff_lattice(lattice: List[List[List[float]]], related_cutoff=1):
-    print(lattice[0].sum())
     r = [(layer > related_cutoff) * layer for layer in lattice]
-    print(r[0].sum())
     return r
 
 
@@ -253,7 +243,6 @@ def correlate_internal_to_layer(embeds: List[npt.NDArray], params: InterpParams,
         print("Computing internal correlations for layer", layer)
         corrs = utils.pairwise_correlation_metric(
             prob_for_layer, prob_for_layer)
-        print(layer, "corrs shape", corrs.shape)
         if use_saved:
             fo = open(f, 'wb+')
             pickle.dump(corrs, fo)
@@ -324,8 +313,6 @@ class Decomposer:
 
         for i, d in enumerate(ds):
             tokenized = self.model[1](d)["input_ids"]
-            # print(tokenized)
-            # return
             for j in range(len(tokenized)):
                 token_to_original_ds.append(i)
                 token_to_pos_original_ds.append(j)
@@ -395,19 +382,15 @@ class Decomposer:
         # We always "start" from the current layer"
         weighting_per_layer = utils.get_weighting_for_layer(
             layer, n_blocks)
-        print("WEIGHTING PER LAYER", weighting_per_layer)
-        print("EDGE DISCOVERY WEIGHTING PER LAYER", weighting_per_edge)
         paths = graph.get_feature_paths(self.correlation_scores, layer, neuron,
                                         k_search=self._k_search, n_max_features=n_features_per_neuron,
                                         weighting_per_edge=weighting_per_edge, all_disjoint=True)
         scores_for_path = []
         print(f"Paths for neuron {neuron}", paths)
         for i, (path, _path_score) in enumerate(paths):
-            # print("LOOKING AT PATH", path, i + 1, "out of", len(paths))
             toks, scores = self.get_top_scores(
                 dataset, path, layer, weighting_per_layer, embds)
             scores_for_path.append((toks, scores))
-            # print("Done with path", i + 1, "out of", len(paths))
 
             # TODO: maybe save json instead?
         visualization.save_display_for_neuron(
@@ -429,10 +412,3 @@ class Decomposer:
             else:
                 self.scores_for_neuron(
                     layer, neuron, dataset, embds=embds, n_features_per_neuron=n_features_per_neuron)
-
-#     def scores_for_all(self, dataset: List[str] = None, embds=None):
-#         # TODO: check cached!!
-#         for layer in range(self.params.n_blocks):
-#             self.scores_for_layer(layer, dataset=dataset, embds=embds)
-
-# # TODO: MUTUAL INFORMATION!!!!

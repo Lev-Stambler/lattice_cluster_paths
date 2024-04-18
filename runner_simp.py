@@ -1,3 +1,4 @@
+# In[]:
 import cluster_model
 import numpy as np
 import importlib
@@ -85,9 +86,7 @@ for i in range(params.n_blocks):
 		# pairs_per_layer[-1].append([])
 		for t in range(max_per_layer):
 			x = top_n[t]
-			# print(corrs[x])
 			if corrs[x] > eps:
-				# print("ADDING", corrs[x])
 				pairs_per_layer[-1].append((corrs[x], [idx, x]))
 
 
@@ -131,7 +130,7 @@ importlib.reload(graph)
 
 # TODO: this is too much memory!!! Just recreate using numpy...
 if not os.path.exists('tmp_G.pkl'):
-    G = graph.GraphOfCorrs(face_corr, corr_cutoff=0.5)
+    G = graph.GraphOfCorrs(face_corr, corr_cutoff=0.1)
     pickle.dump(G, open("tmp_G.pkl", "bw+"))
 else:
     G = pickle.load(open('tmp_G.pkl', 'br'))
@@ -140,7 +139,7 @@ else:
 # In[ ]:
 
 
-list(G.node_idx_to_graph_idx[0].keys())[-10:]
+print(list(G.node_idx_to_graph_idx[0].keys())[-10:])
 
 
 # In[ ]:
@@ -307,11 +306,9 @@ from typing import List
 LIM = 100
 cliques_per_node = []
 for N in range(1024):
-    # print("Getting clique centered at", N)
     cliques_per_node.append([])
     y = nx.find_cliques(g, nodes=[N])
     for i, conns in enumerate(y):
-        # print(conns)
         cliques_per_node[-1].append(conns)
         if i >= LIM:
             break
@@ -329,7 +326,6 @@ def get_avg_clique_weight(clique: List[int]):
     total_cons = 0
     # if len(clique) > 15:
     #     return 0
-    # print("GET AVG", len(clique))
     for i in range(len(clique)):
         for j in range(i):
             total_cons += 1
@@ -342,13 +338,11 @@ def get_avg_clique_weight(clique: List[int]):
 top_cliques_per_node = []
 for node, cliques in enumerate(cliques_per_node):
     top_cliques_per_node.append([])
-    # print("Looking at node", node)
     weights = np.array([get_avg_clique_weight(c) for c in cliques])
     # cliques_per_node[node] = zip(weights, cliques)
     tops = np.argsort(weights)[::-1]
     n = min(len(tops), n_tops)
     for i in range(n):
-        # print(tops[i], cliques[tops[i]], weights[tops[i]])
         top_cliques_per_node[-1].append((weights[tops[i]], cliques[tops[i]]))
 
 

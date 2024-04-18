@@ -23,7 +23,6 @@ def _exp_cos_kernel(x, features, kernel_width):
         K_mu_x:         torch.Tensor (n, k)
     """
     # TODO: LOG this for numerical stability??
-    # print("SHAPES", x @ , np.linalg.norm(x, axis=-1, keepdims=True).shape, np.linalg.norm(features, keepdims=True).shape)
     # Inner product on last dimension
     inner_p = (features @ np.swapaxes(x, -1, -2)).squeeze(axis=-1)
     cos_inner_prod = inner_p / \

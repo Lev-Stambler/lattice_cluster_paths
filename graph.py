@@ -26,7 +26,6 @@ def _to_nx_graph(cluster_scores: List[npt.NDArray],
     node_idx_to_graph_idx = [{}]
     # TODO: IS THERE A FASTER WAY TO DO THIS??? I THINK SO!
     for layer in range(len(cluster_scores)):
-        print("STARTING LAYER", layer)
         # Append the next layer
         graph_idx_to_node_idx.append({})
         node_idx_to_graph_idx.append({})
@@ -67,7 +66,6 @@ def _to_nx_graph(cluster_scores: List[npt.NDArray],
                 if w > 0 and (corr_cutoff is None or c > corr_cutoff):
                     G.add_edge(node_idx, next_idx, weight=w)
             node_idx += 1
-        print("FINISHED LAYER", layer)
 
     sink = n_clusters
     source = n_clusters + 1
@@ -115,10 +113,7 @@ def _top_k_dag_paths(
                 f.close()
                 return paths
             path_no_endpoints = path[1:-1]
-            # print(path_no_sink, path)
             #  TODO: CANNOT GO BACKWARDS
-            # print(path, path_no_sink_no_source)
-            # print("PATH NO SINK", path_no_sink)
             path_node_idx = [graph_layers_to_idx[i][node]
                              for i, node in enumerate(path_no_endpoints)]
             assert len(path_node_idx) == n_layers
@@ -130,7 +125,6 @@ def _top_k_dag_paths(
                 for i in range(0, len(path_no_endpoints) - 1)])
 
             paths.append((path_node_idx, recovered_weight))
-            print(paths[-1])
 
             path_no_layer = path_no_endpoints[:layer] + \
                 ([] if layer == n_layers - 1 else path_no_endpoints[layer + 1:])

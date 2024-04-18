@@ -45,23 +45,6 @@ class CorrelationLattice:
             cutoffs.append(cutoff)
         return cutoffs
 
-    # def get_all_lattice_paths_pairwise(self, top_node: Node, bot_node: Node = None) -> None:
-    #     to_top = utils.restrict_to_related_vertex(self.lattice, top_node.layer, top_node.feature)
-    #     if bot_node is not None:
-    #         bot_and_top = utils.restrict_to_related_vertex(to_top, bot_node.layer, bot_node.feature)
-    #     else:
-    #         bot_and_top = to_top
-
-    #     G, source, sink, graph_idx_to_node_idx, node_idx_to_graph_idx, \
-    #         most_pos_per_layer = graph._to_nx_graph(bot_and_top)
-
-    #     print("G neighb test", list(G.neighbors(1)))
-    #     top_idx = node_idx_to_graph_idx[top_node.layer][0] # We only have 1 idx due to the restriction
-    #     bot_idx = source if bot_node is None else node_idx_to_graph_idx[bot_node.layer][0] # We only have 1 idx due to the restriction
-    #     all_paths_G = list(nx.all_simple_paths(G, bot_idx, top_idx))
-    #     all_paths_nodes =
-    #     print(all_paths)
-
     def calc_whole_lattice(self):
         raise NotImplementedError
         pass
