@@ -48,6 +48,7 @@ def _calc_across_layer_sim_score(clique_lower: Face,
     total_corr = 1.0
     for cl in clique_lower[1]:
         for cu in clique_upper[1]:
+            print(cl, cu, clique_lower, clique_upper)
             total_corr *= inter_layer_corr[cl, cu]
     if total_corr == 0.0: return 0.0
     assert total_corr > 0.0
