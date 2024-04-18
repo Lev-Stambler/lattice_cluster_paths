@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[2]:
+# In[1]:
 
 
 import cluster_model
@@ -51,19 +51,48 @@ params = cluster_model.InterpParams(
 decomp = cluster_model.Decomposer(params)
 
 
-# In[3]:
+# In[2]:
 
 
 decomp.load()
 
 
-# ## Try Clique Method
+# ## Try a simple pairwise *cancellation* method
+# 
+# Given the current method of determining signaling, we should get that some stuff sums to one. It would be interesting to plot out what these signals look like.
+# We can then use some **approximation** of the neuron via enough signals. Indeed we may consider things on there own as well but not clear
+# 
+# This eps thing doesn't really work the way we want it to. The problem is that its not like disjoint stuff... maybe tensor programming would actually help here to model the net as a set of correlations
+
+# In[3]:
+
+
+import numpy as np
+
+eps = 0.05
+max_per_layer = 10
+
+pairs_per_layer = []
+for i in range(params.n_blocks):
+	pairs_per_layer.append([])
+	for idx, corrs in enumerate(decomp.internal_correlations[i]):
+		top_n = np.argsort(corrs)[::-1]
+		# pairs_per_layer[-1].append([])
+		for t in range(max_per_layer):
+			x = top_n[t]
+			# print(corrs[x])
+			if corrs[x] > eps:
+				# print("ADDING", corrs[x])
+				pairs_per_layer[-1].append((corrs[x], [idx, x]))
+
 
 # In[4]:
 
 
-decomp.internal_correlations[0].shape, decomp.ds_emb[0].shape
+print(len(pairs_per_layer))
 
+
+# ## Try Clique Method
 
 # In[5]:
 
@@ -72,19 +101,6 @@ import importlib
 import simplex
 import pickle
 import os
-importlib.reload(simplex)
-
-p = 'tmp_for_clique_list.pkl'
-if os.path.exists(p):
-    clique_lists = pickle.load(open(p, 'br'))
-else:
-    clique_lists = []
-    for layer in range(params.n_blocks):
-        print("STARTING LAYER", layer)
-        clique_lists.append(simplex.find_high_weight_faces(decomp.internal_correlations[layer], 
-                                                           decomp.ds_emb[layer]))
-        print(clique_lists[-1])
-    pickle.dump(clique_lists, open('tmp_for_clique_list.pkl', "bw+"))
 
 
 # In[6]:
@@ -93,16 +109,19 @@ else:
 import numpy as np
 importlib.reload(simplex)
 
-if os.path.exists('face_corr_0.npy'):
+if False and os.path.exists('face_corr_0.npy'):
 	face_corr = [
-        np.load(f'face_corr_{i}.npy')  for i in range(5)
+        np.load(f'face_corr_{i}.npy')  for i in range(params.n_blocks - 1)
     ]
 else:
-    face_corr = simplex.face_correlation_lattice(decomp.internal_correlations, clique_lists)
+		#  TODO: save this
+    face_corr = simplex.face_correlation_lattice(decomp.internal_correlations, pairs_per_layer)
+    for i, f in enumerate(face_corr):
+        np.save(f'face_corr_{i}.npy', f)
 # pickle.dump(clique_lists, open('tmp_for_clique_corrs.pkl', "bw+"))
 
 
-# In[7]:
+# In[ ]:
 
 
 import graph
@@ -122,13 +141,13 @@ else:
     G = pickle.load(open('tmp_G.pkl', 'br'))
 
 
-# In[8]:
+# In[ ]:
 
 
 list(G.node_idx_to_graph_idx[0].keys())[-10:]
 
 
-# In[9]:
+# In[ ]:
 
 
 importlib.reload(graph)
@@ -141,7 +160,7 @@ k = 10
 path_inds = G.get_top_k_paths(layer, neuron, k, all_disjoint=True)
 
 
-# In[10]:
+# In[ ]:
 
 
 paths = [
@@ -152,7 +171,7 @@ paths
 
 # ## Find highest weight cliques
 
-# In[16]:
+# In[ ]:
 
 
 TOP_N_CLIQUES = 200
@@ -161,7 +180,7 @@ top_clique_inds = np.argsort(np.array([c[0] for c in clique_lists[LAYER]]))[::-1
 top_cliques = [clique_lists[LAYER][t] for t in top_clique_inds]
 
 
-# In[17]:
+# In[ ]:
 
 
 import numpy as np
@@ -205,7 +224,7 @@ def score_face_path(embd_dataset: List[npt.NDArray], path: List[simplex.Face], l
     return rets
 
 
-# In[18]:
+# In[ ]:
 
 
 import visualization
