@@ -1,10 +1,16 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[1]:
-
-
 import cluster_model
+import numpy as np
+import importlib
+import simplex
+import pickle
+import os
+import graph
+import networkx as nx
+from typing import List
+import numpy.typing as npt
+import kernel
+import visualization
+
 MODEL_NAME = 'EleutherAI/pythia-70m'
 DATASET_NAME = 'NeelNanda/pile-10k'
 MIXTURE_MODEL_TYPE = "KMenas"
@@ -67,7 +73,6 @@ decomp.load()
 # In[3]:
 
 
-import numpy as np
 
 eps = 0.05
 max_per_layer = 10
@@ -97,19 +102,13 @@ print(len(pairs_per_layer))
 # In[5]:
 
 
-import importlib
-import simplex
-import pickle
-import os
 
 
 # In[6]:
 
-
-import numpy as np
 importlib.reload(simplex)
 
-if False and os.path.exists('face_corr_0.npy'):
+if os.path.exists('face_corr_0.npy'):
 	face_corr = [
         np.load(f'face_corr_{i}.npy')  for i in range(params.n_blocks - 1)
     ]
@@ -124,9 +123,6 @@ else:
 # In[ ]:
 
 
-import graph
-import pickle
-import networkx as nx
 importlib.reload(graph)
 
 # Hrmmmm.... this type of "disentanglement may just be too harsh?? Or is the harshness a good thing?"
@@ -162,11 +158,9 @@ path_inds = G.get_top_k_paths(layer, neuron, k, all_disjoint=True)
 
 # In[ ]:
 
-
 paths = [
-    [clique_lists[layer][idx][1] for layer, idx in enumerate(p[0])] for p in path_inds
+    [pairs_per_layer[layer][idx][1] for layer, idx in enumerate(p[0])] for p in path_inds
 ]
-paths
 
 
 # ## Find highest weight cliques
@@ -183,10 +177,6 @@ top_cliques = [clique_lists[LAYER][t] for t in top_clique_inds]
 # In[ ]:
 
 
-import numpy as np
-from typing import List
-import numpy.typing as npt
-import kernel
 
 
 def score_face_path(embd_dataset: List[npt.NDArray], path: List[simplex.Face], layer: int, BS=1_024 * 64):
@@ -227,7 +217,6 @@ def score_face_path(embd_dataset: List[npt.NDArray], path: List[simplex.Face], l
 # In[ ]:
 
 
-import visualization
 Path = List[List[int]]
 
 def score_group_vis(paths: List[Path], layer: int, neuron: int):
@@ -329,7 +318,6 @@ for N in range(1024):
 
 
 # In[ ]:
-
 
 import numpy as np
 
