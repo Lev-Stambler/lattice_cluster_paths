@@ -144,7 +144,7 @@ def _top_k_dag_paths(
         # print("PATH NO SINK", path_no_sink)
         path_node_idx = [graph_layers_to_idx[i][node]
                          for i, node in enumerate(path_no_endpoints)]
-        assert len(path_node_idx) == n_layers
+        # assert len(path_node_idx) == n_layers
         path_node_idx[layer] = neuron
 
         recovered_weight = sum([
@@ -255,15 +255,35 @@ class GraphOfCorrs:
         self.max_outgoing_for_feature = max_outgoing_for_feature
         self.corr_cutoff = corr_cutoff
 
-    def _restrict_g_to_neuron(self, layer: int, neuron: int) -> nx.Graph:
+    def _restrict_g_to_neuron(self, layer: int, neuron: int,
+                              from_layer=None, to_layer=None) -> nx.Graph:
         new_g = self.G.copy()
         for n in self.node_idx_to_graph_idx[layer].keys():
             if n != neuron and self.G.has_node(self.node_idx_to_graph_idx[layer][n]):
                 new_g.remove_node(self.node_idx_to_graph_idx[layer][n])
-        return new_g
+        new_source = self.source
+        new_sink = self.sink
+        if from_layer is not None:
+            new_source = new_source * 2 # We have that the original source and sink are the max of the indices
+            graph_idxs = self.node_idx_to_graph_idx[from_layer]
+            for _, v in enumerate(graph_idxs.values()):
+                new_g.add_edge(new_source, v, weight=1)
+        if to_layer is not None:
+            new_sink = new_sink * 2 # We have that the original source and sink are the max of the indices
+            graph_idxs = self.node_idx_to_graph_idx[to_layer]
+            for _, v in enumerate(graph_idxs.values()):
+                new_g.add_edge(v, new_sink, weight=1)
 
-    def get_top_k_paths(self, layer: int, neuron: int, k: int, all_disjoint=True):
-        r = self._restrict_g_to_neuron(layer, neuron)
-        return _top_k_dag_paths(r, self.source, self.sink, self.graph_idx_to_node_idx,
+        return new_g, new_source, new_sink
+
+    def get_top_k_paths(self, layer: int, neuron: int, k: int, all_disjoint=True,
+                        from_layer=None, to_layer=None):
+        """
+            Get the top_k_paths from `from_layer` (if None, before the graph), to `to_layer`
+            (if None, after the graph)
+        """
+        r, source, sink, = self._restrict_g_to_neuron(
+            layer, neuron, from_layer=from_layer, to_layer=to_layer)
+        return _top_k_dag_paths(r, source, sink, self.graph_idx_to_node_idx,
                                 self.node_idx_to_graph_idx, self.most_pos_per_layer,
                                 self.n_layers, layer, neuron, k, all_disjoint=all_disjoint)
