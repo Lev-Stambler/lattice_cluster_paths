@@ -1,16 +1,14 @@
-# In[]:
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[2]:
+
+
 import cluster_model
 import numpy as np
-import importlib
-import simplex
-import pickle
-import os
-import graph
-import networkx as nx
 from typing import List
 import numpy.typing as npt
 import kernel
-import visualization
 
 MODEL_NAME = 'EleutherAI/pythia-70m'
 DATASET_NAME = 'NeelNanda/pile-10k'
@@ -58,7 +56,7 @@ params = cluster_model.InterpParams(
 decomp = cluster_model.Decomposer(params)
 
 
-# In[2]:
+# In[3]:
 
 
 decomp.load()
@@ -70,10 +68,20 @@ decomp.load()
 # We can then use some **approximation** of the neuron via enough signals. Indeed we may consider things on there own as well but not clear
 # 
 # This eps thing doesn't really work the way we want it to. The problem is that its not like disjoint stuff... maybe tensor programming would actually help here to model the net as a set of correlations
+# 
+# 
+# ## Try Clique Method (or pair method, idk yet) for the specific layer while using individual neurons in following and previous layers to cancel things out
 
-# In[3]:
+# In[4]:
 
 
+LAYER = 1
+
+
+# In[5]:
+
+
+import numpy as np
 
 eps = 0.05
 max_per_layer = 10
@@ -81,47 +89,82 @@ max_per_layer = 10
 pairs_per_layer = []
 for i in range(params.n_blocks):
 	pairs_per_layer.append([])
-	for idx, corrs in enumerate(decomp.internal_correlations[i]):
-		top_n = np.argsort(corrs)[::-1]
-		# pairs_per_layer[-1].append([])
-		for t in range(max_per_layer):
-			x = top_n[t]
-			if corrs[x] > eps:
-				pairs_per_layer[-1].append((corrs[x], [idx, x]))
-
-
-# In[4]:
-
-
-print(len(pairs_per_layer))
-
-
-# ## Try Clique Method
-
-# In[5]:
-
-
+	if i == LAYER:
+		for idx, corrs in enumerate(decomp.internal_correlations[i]):
+			top_n = np.argsort(corrs)[::-1]
+			# pairs_per_layer[-1].append([])
+			for t in range(max_per_layer):
+				x = top_n[t]
+				# print(corrs[x])
+				if corrs[x] > eps:
+					# print("ADDING", corrs[x])
+					pairs_per_layer[-1].append((corrs[x], [idx, x]))
+	else:
+		for idx, _ in enumerate(decomp.internal_correlations[i]):
+			pairs_per_layer[-1].append((1, [idx, idx]))
 
 
 # In[6]:
 
+
+print(len(pairs_per_layer))
+pairs_per_layer[0][:10]
+
+
+# In[7]:
+
+
+import importlib
+import simplex
+import pickle
+import os
+
+
+# In[8]:
+
+
+import numpy as np
 importlib.reload(simplex)
 
-if os.path.exists('face_corr_0.npy'):
-	face_corr = [
-        np.load(f'face_corr_{i}.npy')  for i in range(params.n_blocks - 1)
-    ]
-else:
-		#  TODO: save this
-    face_corr = simplex.face_correlation_lattice(decomp.internal_correlations, pairs_per_layer)
-    for i, f in enumerate(face_corr):
-        np.save(f'face_corr_{i}.npy', f)
-# pickle.dump(clique_lists, open('tmp_for_clique_corrs.pkl', "bw+"))
+def load_face_corr(layer: int):
+	if os.path.exists(f'face_corr_{layer}.npy'):
+		return np.load(f'face_corr_{layer}.npy')
+	r = simplex.face_correlation_for_layer(layer, pairs_per_layer[layer], pairs_per_layer[layer + 1], decomp.internal_correlations) 
+	np.save(f'face_corr_{layer}.npy', r)
+	return r
+
+face_corr = [load_face_corr(i) for i in range(params.n_blocks - 1)]
+
+# if os.path.exists('face_corr_0.npy'):
+# 	face_corr = [
+#        np.load(f'face_corr_{i}.npy')  for i in range(params.n_blocks - 1)
+#     ]
+# else:
+# 		#  TODO: save this
+#     face_corr = simplex.face_correlation_lattice(decomp.internal_correlations, pairs_per_layer)
+#     for i, f in enumerate(face_corr):
+#         np.save(f'face_corr_{i}.npy', f)
+# # pickle.dump(clique_lists, open('tmp_for_clique_corrs.pkl', "bw+"))
 
 
-# In[ ]:
+# In[9]:
 
 
+(face_corr[1][3] > 0.6).nonzero()[0].shape
+
+
+# In[29]:
+
+
+face_corr[0][1]
+
+
+# In[10]:
+
+
+import graph
+import pickle
+import networkx as nx
 importlib.reload(graph)
 
 # Hrmmmm.... this type of "disentanglement may just be too harsh?? Or is the harshness a good thing?"
@@ -130,65 +173,59 @@ importlib.reload(graph)
 
 # TODO: this is too much memory!!! Just recreate using numpy...
 if not os.path.exists('tmp_G.pkl'):
-    G = graph.GraphOfCorrs(face_corr, corr_cutoff=0.1)
+    G = graph.GraphOfCorrs(face_corr, corr_cutoff=0.0, max_outgoing_for_feature=8) # Given the current strat we do not need much on the outgoing
     pickle.dump(G, open("tmp_G.pkl", "bw+"))
 else:
     G = pickle.load(open('tmp_G.pkl', 'br'))
 
 
-# In[ ]:
+# In[11]:
 
 
-print(list(G.node_idx_to_graph_idx[0].keys())[-10:])
+list(G.node_idx_to_graph_idx[0].keys())[-10:]
 
 
-# In[ ]:
+# In[28]:
 
 
 importlib.reload(graph)
 
 # path_inds = G.get_top_k_paths(0, 1, 10)
 self = G
-layer = 0
-neuron = 1408
+layer = LAYER
+neuron = 1
 k = 10
-path_inds = G.get_top_k_paths(layer, neuron, k, all_disjoint=True)
+path_inds = G.get_top_k_paths(layer, neuron, k, all_disjoint=True,
+															from_layer=0, to_layer=3)
+path_inds
 
 
-# In[ ]:
+# In[24]:
+
 
 paths = [
-    [pairs_per_layer[layer][idx][1] for layer, idx in enumerate(p[0])] for p in path_inds
+    [
+		pairs_per_layer[layer][idx][1] for layer, idx in enumerate(p[0])
+	] for p in path_inds
 ]
+paths
 
 
-# ## Find highest weight cliques
-
-# In[ ]:
+# In[25]:
 
 
-TOP_N_CLIQUES = 200
-LAYER = layer
-top_clique_inds = np.argsort(np.array([c[0] for c in clique_lists[LAYER]]))[::-1][:TOP_N_CLIQUES]
-top_cliques = [clique_lists[LAYER][t] for t in top_clique_inds]
+def score_face_path(embd_dataset: List[npt.NDArray], path: List[simplex.Face],
+                    layer: int, from_layer: int, BS=1_024 * 64, cutoff=0.001):
 
-
-# In[ ]:
-
-
-
-
-def score_face_path(embd_dataset: List[npt.NDArray], path: List[simplex.Face], layer: int, BS=1_024 * 64):
-
-	# Faks
+	# TODO: this is the hard part!
     def get_cutoff_for_layer(neuron: int, layer_to_cutoff: int):
         fs = kernel.feature_prob(embd_dataset[layer_to_cutoff], neuron)
-        return (fs.sum() / len(fs)) # TODO: COMP avgs and save somewhere
+        # return (fs.sum() / len(fs)) # TODO: COMP avgs and save somewhere
         nonzeros = fs[np.where(fs > 0)]
         if len(nonzeros) == 0:
             return 0.0
         r = sum(nonzeros) / len(nonzeros) # Need to be above some fraction of the non-zero supported neurons
-        return r / 2
+        return r
 
     n_tokens = embd_dataset[0].shape[0]
     rets = np.ones(n_tokens)
@@ -196,36 +233,46 @@ def score_face_path(embd_dataset: List[npt.NDArray], path: List[simplex.Face], l
 
     for i in range(0, n_tokens, BS):
         top_idx = min(i+BS, n_tokens)
-        for curr_layer in range(len(path)):
+        for p_idx in range(len(path)):
             per_node_score = None
             n_nonzero_on = np.zeros(top_idx - i)
-            curr_len = len(path[curr_layer])
-            for node in path[curr_layer]:
+            curr_len = len(path[p_idx])
+            curr_layer = p_idx + from_layer
+            for node in path[p_idx]:
                 # TODO: func out because messy
-                
                 local_scores = kernel.feature_prob(embd_dataset[curr_layer][i:top_idx], node)
-                local_scores = local_scores * (local_scores >= get_cutoff_for_layer(node, curr_layer))
+                c = get_cutoff_for_layer(node, curr_layer)
+                # print(c)
+                local_scores = local_scores * (local_scores >= c)
                 n_nonzero_on += (local_scores > 0)
                 
                 per_node_score = local_scores if per_node_score is None else per_node_score * local_scores
 
-            rets[i:top_idx] *= (per_node_score * (per_node_score > 0) if layer == curr_layer                 else (n_nonzero_on >= (curr_len)))
+            rets[i:top_idx] *= (per_node_score * (per_node_score >= cutoff) if layer == curr_layer                 else n_nonzero_on >= curr_len)
     return rets
 
 
-# In[ ]:
+# In[26]:
 
 
+paths
+
+
+# In[27]:
+
+
+import visualization
 Path = List[List[int]]
 
-def score_group_vis(paths: List[Path], layer: int, neuron: int):
+# TODO: scoring with from_layer
+def score_group_vis(paths: List[Path], layer: int, neuron: int, from_layer: int):
     embeds, token_to_original_ds, _ = decomp._get_ds_metadata(
         decomp.dataset, decomp.ds_emb)
     BOS_TOKEN = '||BOS||'
     to_vis = []
     for i, path in enumerate(paths):
         print("Scoring path", i, path)
-        ret = score_face_path(decomp.ds_emb, path[:4], layer=layer)
+        ret = score_face_path(decomp.ds_emb, path, layer=layer, from_layer=from_layer)
         print(f"ZERO COMPS for feature {i}", ret.nonzero()[0].shape, ret.shape, ret.nonzero()[0].shape[0] / ret.shape[0])
         item_to_scores = {}
         # return log_scores
@@ -255,13 +302,17 @@ def score_group_vis(paths: List[Path], layer: int, neuron: int):
 
 path = paths[1]
 
-k = 5
-for i, top_ind in enumerate(top_clique_inds):
-    path_inds = G.get_top_k_paths(layer, top_ind, k, all_disjoint=True)
+k = 8
+layer = LAYER
+for i, top_ind in enumerate(range(0, 100)):
+    from_layer = max(layer - 2, 0)
+    to_layer = min(layer + 2, params.n_blocks - 1)
+    path_inds = G.get_top_k_paths(layer, top_ind, k, all_disjoint=True, # TODO: hrmm on all disjoint...
+                                  from_layer=from_layer, to_layer=to_layer)
     paths = [
-        [clique_lists[layer][idx][1] for layer, idx in enumerate(p[0])] for p in path_inds
+        [pairs_per_layer[layer][idx][1] for layer, idx in enumerate(p[0])] for p in path_inds
     ]
-    score_group_vis(paths, layer, i)
+    score_group_vis(paths, layer, top_ind, from_layer)
 # score_group_vis(path, layer, neuron)
 
 
@@ -306,15 +357,18 @@ from typing import List
 LIM = 100
 cliques_per_node = []
 for N in range(1024):
+    # print("Getting clique centered at", N)
     cliques_per_node.append([])
     y = nx.find_cliques(g, nodes=[N])
     for i, conns in enumerate(y):
+        # print(conns)
         cliques_per_node[-1].append(conns)
         if i >= LIM:
             break
 
 
 # In[ ]:
+
 
 import numpy as np
 
@@ -326,6 +380,7 @@ def get_avg_clique_weight(clique: List[int]):
     total_cons = 0
     # if len(clique) > 15:
     #     return 0
+    # print("GET AVG", len(clique))
     for i in range(len(clique)):
         for j in range(i):
             total_cons += 1
@@ -338,11 +393,13 @@ def get_avg_clique_weight(clique: List[int]):
 top_cliques_per_node = []
 for node, cliques in enumerate(cliques_per_node):
     top_cliques_per_node.append([])
+    # print("Looking at node", node)
     weights = np.array([get_avg_clique_weight(c) for c in cliques])
     # cliques_per_node[node] = zip(weights, cliques)
     tops = np.argsort(weights)[::-1]
     n = min(len(tops), n_tops)
     for i in range(n):
+        # print(tops[i], cliques[tops[i]], weights[tops[i]])
         top_cliques_per_node[-1].append((weights[tops[i]], cliques[tops[i]]))
 
 

@@ -83,8 +83,8 @@ def _to_nx_graph(cluster_scores: List[npt.NDArray],
 def _top_k_dag_paths(
     graph, source, sink, graph_layers_to_idx, node_layers_to_graph, most_pos_per_layer,
     n_layers: int, layer: int, neuron: int, k: int,
-    # layers: List[npt.NDArray[2]], layer: int, neuron: int, k: int,
-        exclude_set={}, all_disjoint=False):
+    from_layer: int,
+    exclude_set={}, all_disjoint=False):
     # r = utils.restrict_to_related_vertex(layers, layer, neuron)
     # graph, source, sink, graph_layers_to_idx, \
     #     node_layers_to_graph, most_pos_per_layer = _to_nx_graph(
@@ -107,17 +107,18 @@ def _top_k_dag_paths(
             try:
                 path = next(X)
             except:
-                print(f"No path for neuron {neuron}")
-                f = open('failed_neurons.txt', '+a')
-                f.write(f'{layer};{neuron};{path_try}\n')
-                f.close()
+                if len(paths) == 0:
+                    print(f"No path for neuron {neuron}")
+                    f = open('failed_neurons.txt', '+a')
+                    f.write(f'{layer};{neuron};{path_try}\n')
+                    f.close()
                 return paths
             path_no_endpoints = path[1:-1]
             #  TODO: CANNOT GO BACKWARDS
-            path_node_idx = [graph_layers_to_idx[i][node]
+            path_node_idx = [graph_layers_to_idx[i + from_layer][node]
                              for i, node in enumerate(path_no_endpoints)]
-            assert len(path_node_idx) == n_layers
-            path_node_idx[layer] = neuron
+            # assert len(path_node_idx) == n_layers
+            path_node_idx[layer - from_layer] = neuron #TODO: fix with start and end
 
             recovered_weight = sum([
                 -1 * (graph[path_no_endpoints[i]][path_no_endpoints[i + 1]]['weight'] / GRAPH_SCALING_RESOLUTION
@@ -126,8 +127,8 @@ def _top_k_dag_paths(
 
             paths.append((path_node_idx, recovered_weight))
 
-            path_no_layer = path_no_endpoints[:layer] + \
-                ([] if layer == n_layers - 1 else path_no_endpoints[layer + 1:])
+            path_no_layer = path_no_endpoints[:layer - from_layer] + \
+                ([] if layer == n_layers - 1 else path_no_endpoints[layer - from_layer + 1:])
             # print("Removing", path_no_layer)
             for n in path_no_layer:
                 graph.remove_node(n)
@@ -142,10 +143,10 @@ def _top_k_dag_paths(
         #  TODO: CANNOT GO BACKWARDS
         # print(path, path_no_sink_no_source)
         # print("PATH NO SINK", path_no_sink)
-        path_node_idx = [graph_layers_to_idx[i][node]
+        path_node_idx = [graph_layers_to_idx[i + from_layer][node]
                          for i, node in enumerate(path_no_endpoints)]
         # assert len(path_node_idx) == n_layers
-        path_node_idx[layer] = neuron
+        path_node_idx[layer - from_layer] = neuron
 
         recovered_weight = sum([
             -1 * (graph[path_no_endpoints[i]][path_no_endpoints[i + 1]]['weight'] / GRAPH_SCALING_RESOLUTION
@@ -286,4 +287,4 @@ class GraphOfCorrs:
             layer, neuron, from_layer=from_layer, to_layer=to_layer)
         return _top_k_dag_paths(r, source, sink, self.graph_idx_to_node_idx,
                                 self.node_idx_to_graph_idx, self.most_pos_per_layer,
-                                self.n_layers, layer, neuron, k, all_disjoint=all_disjoint)
+                                self.n_layers, layer, neuron, k, all_disjoint=all_disjoint, from_layer=from_layer)
