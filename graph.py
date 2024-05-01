@@ -265,7 +265,7 @@ class GraphOfCorrs:
         new_source = self.source
         new_sink = self.sink
         if from_layer is not None:
-            new_source = new_source * 2 # We have that the original source and sink are the max of the indices
+            new_source = new_source * 10 # We have that the original source and sink are the max of the indices
             graph_idxs = self.node_idx_to_graph_idx[from_layer]
             for _, v in enumerate(graph_idxs.values()):
                 new_g.add_edge(new_source, v, weight=1)
