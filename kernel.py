@@ -56,10 +56,12 @@ def _make_kernel_feat(n_dims: int):
     return features
 
 # TODO: WE CAN MAKE THIS EVEN FASTER BY JUST USING NUMPY BASED SEL TECHs
-def feature_prob(x: npt.NDArray, feature_idx: int, kernel_width=0.01):
+def feature_prob(x: npt.NDArray, feature_idx: int, kernel_width=0.01, keep_negative=False):
     mult = 1 if feature_idx % 2 == 0 else -1
     # x is (bs, d)
     multed = x[:, feature_idx // 2] * mult
+    if keep_negative:
+        return multed
     return multed * (multed > 0)
     # x = _check_size(x)
     # return x

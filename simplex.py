@@ -10,7 +10,7 @@ Face = Tuple[float, List[int]]
 
 
 # TODO: GEOMETRIC OR ARITHMETIC!!!???
-def _get_avg_clique_weight(weight_attrs, face: List[int]):
+def get_clique_score(weight_attrs, face: List[int]):
     total_weight = 1
     total_cons = 0
     # TODO: IDEALLY WE NEVER FACE THIS!!
@@ -26,13 +26,14 @@ def _get_avg_clique_weight(weight_attrs, face: List[int]):
             o = [face[i], face[j]]
             o.sort()
             o = tuple(o)
-            total_weight *= weight_attrs[o]
+            total_weight += weight_attrs[o]
 
     if total_weight == 0.0:
         return 0.0
     assert total_weight > 0.0
     # We want to bias towards smaller cliques
-    return total_weight ** (1 / (total_cons))
+    return total_weight
+    # return total_weight ** (1 / (total_cons))
     return total_weight / (total_cons)
 
 
@@ -130,7 +131,7 @@ def find_high_weight_faces(correlations: npt.NDArray[2],
         top_cliques_per_node.append([])
         # print("Looking at node", node)
         weights = np.array(
-            [_get_avg_clique_weight(weight_attrs, c) for c in cliques])
+            [get_clique_score(weight_attrs, c) for c in cliques])
         # cliques_per_node[node] = zip(weights, cliques)
         tops = np.argsort(weights)[::-1]
         n = min(len(tops), n_cliques_per_vertex)
