@@ -59,7 +59,7 @@ def _calc_across_layer_sim_score(clique_lower: Face,
     # return total_corr / (len(clique_lower[1] * len(clique_upper[1])))
 
 
-def _sparsity_correlation_graph(G: nx.Graph, keep_neighbs_upper: int):
+def sparsify_correlation_graph(G: nx.Graph, keep_neighbs_upper: int):
     weight_attrs = nx.get_edge_attributes(G, 'weight')
     for node in G.nodes:
         edges = [tuple(list(sorted(e))) for e in G.edges(node)]
@@ -97,7 +97,7 @@ def find_high_weight_faces(correlations: npt.NDArray[2],
     for i in range(len(corrs_cutoff)):
         corrs_cutoff[i, i] = 0
     G = nx.from_numpy_array(corrs_cutoff)  # , edge_attr='weight')
-    G = _sparsity_correlation_graph(G, upper_neighbs)
+    G = sparsify_correlation_graph(G, upper_neighbs)
     weight_attrs = nx.get_edge_attributes(G, 'weight')
 
     for N in range(n_nodes):

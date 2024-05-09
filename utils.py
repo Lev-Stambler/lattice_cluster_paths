@@ -193,7 +193,7 @@ def cosine_similarity_with_metric(a: npt.NDArray, b: npt.NDArray, metric: npt.ND
 
 # TODO: smarter` cutoff per row. BUT QUANTIZATION!
 # TODO: this can be made wayyyy faster...
-def pairwise_signaling(A: npt.NDArray[2], B: npt.NDArray[2], cutoff_per_row=0.1):
+def pairwise_signaling(A: npt.NDArray[2], B: npt.NDArray[2], cutoff_per_row=0.0001):
     """
     Pairwise **directed** signaling from A to B
     """
