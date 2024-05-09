@@ -5,7 +5,6 @@ import numpy.typing as npt
 from typing import List, Callable
 import networkx as nx
 
-
 class Node:
     layer: int
     feature: int

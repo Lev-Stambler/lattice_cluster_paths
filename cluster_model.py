@@ -6,14 +6,14 @@ import numpy as np
 import numpy.typing as npt
 import torch
 import kernel
-import metadata as paramslib
+import params as paramslib
 from model import TransformerModel, forward_hooked_model, load_model
 import utils
 import visualization
 import graph
 import json
 
-from metadata import InterpParams, LatticeParams
+from params import InterpParams, LatticeParams
 
 DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 # DEFAULT_DEVICE = 'cpu' if torch.cuda.is_available() else 'cpu'
@@ -304,7 +304,7 @@ class Decomposer:
             self.ds_emb, params=self.params
         )
 
-    def _get_ds_metadata(self, ds: List[str], embeds: npt.NDArray = None):
+    def _get_ds_cache(self, ds: List[str], embeds: npt.NDArray = None):
         if embeds is None:
             embeds = get_layers_emb_dataset(
                 self.model, ds, self.layers, params=self.params, use_save=False)
@@ -328,7 +328,7 @@ class Decomposer:
         if weighting_per_layer is None:
             weighting_per_layer = np.ones(self.params.n_blocks)
 
-        embeds, token_to_original_ds, _ = self._get_ds_metadata(
+        embeds, token_to_original_ds, _ = self._get_ds_cache(
             to_score, embeds)
         all_scores = log_score_tokens_for_path(
             embd_dataset=embeds, path=score_path,

@@ -302,7 +302,7 @@ print("ZERO COMPS", ret.nonzero()[0].shape, ret.shape, ret.nonzero()[0].shape[0]
 # In[ ]:
 
 
-embeds, token_to_original_ds, _ = decomp._get_ds_metadata(
+embeds, token_to_original_ds, _ = decomp._get_ds_cache(
     decomp.dataset, decomp.ds_emb)
 item_to_scores = {}
 # return log_scores
@@ -537,7 +537,7 @@ ax1.plot(fs[:-log_idx]), sum(fs) / len(fs), sum(nonzeros) / len(nonzeros)
 # In[ ]:
 
 
-get_ipython().system('rm metadata/correlation-de5f2c593b55f095d11e400fd8f6d0964dc8512c/layer_0_neuron_*')
+get_ipython().system('rm cache/correlation-de5f2c593b55f095d11e400fd8f6d0964dc8512c/layer_0_neuron_*')
 
 
 # In[ ]:

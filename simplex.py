@@ -8,57 +8,6 @@ import kernel
 
 Face = Tuple[float, List[int]]
 
-
-# TODO: GEOMETRIC OR ARITHMETIC!!!???
-def get_clique_score(weight_attrs, face: List[int]):
-    total_weight = 1
-    total_cons = 0
-    # TODO: IDEALLY WE NEVER FACE THIS!!
-    # TODO: we do have this though... this is like a dead neuron
-    if len(face) <= 1:
-        return 0.0
-    # TODO: RM this when find smarter way...
-    # if len(face) > 5:
-    #     return 0
-    for i in range(len(face)):
-        for j in range(i):
-            total_cons += 1
-            o = [face[i], face[j]]
-            o.sort()
-            o = tuple(o)
-            total_weight += weight_attrs[o]
-
-    if total_weight == 0.0:
-        return 0.0
-    assert total_weight > 0.0
-    # We want to bias towards smaller cliques
-    return total_weight
-    # return total_weight ** (1 / (total_cons))
-    return total_weight / (total_cons)
-
-
-def _calc_across_layer_sim_score(clique_lower: Face,
-                                 clique_upper: Face,
-                                 inter_layer_corr: npt.NDArray[2]) -> float:
-    """
-    An **commutative** function (i.e. clique_lower and clique_upper are exchangeable)
-
-    We are looking for the **average** weight across the edges. This way, large cliques are not advantaged
-    """
-    total_corr = 1.0
-    for cl in clique_lower[1]:
-        for cu in clique_upper[1]:
-            total_corr *= inter_layer_corr[cl, cu]
-    if total_corr == 0.0:
-        return 0.0
-    assert total_corr > 0.0
-    n_conns = len(clique_lower[1] * len(clique_upper[1]))
-    # Get the *GEOMETRIC* average connection weight
-    r = total_corr ** (1 / n_conns)
-    return r
-    # return total_corr / (len(clique_lower[1] * len(clique_upper[1])))
-
-
 def sparsify_correlation_graph(G: nx.Graph, keep_neighbs_upper: int):
     weight_attrs = nx.get_edge_attributes(G, 'weight')
     for node in G.nodes:

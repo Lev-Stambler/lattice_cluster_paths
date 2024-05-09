@@ -266,7 +266,7 @@ Path = List[List[int]]
 
 # TODO: scoring with from_layer
 def score_group_vis(paths: List[Path], layer: int, neuron: int, from_layer: int):
-    embeds, token_to_original_ds, _ = decomp._get_ds_metadata(
+    embeds, token_to_original_ds, _ = decomp._get_ds_cache(
         decomp.dataset, decomp.ds_emb)
     BOS_TOKEN = '||BOS||'
     to_vis = []
@@ -521,7 +521,7 @@ ax1.plot(fs[:-log_idx]), sum(fs) / len(fs), sum(nonzeros) / len(nonzeros)
 # In[ ]:
 
 
-get_ipython().system('rm metadata/correlation-de5f2c593b55f095d11e400fd8f6d0964dc8512c/layer_0_neuron_*')
+get_ipython().system('rm cache/correlation-de5f2c593b55f095d11e400fd8f6d0964dc8512c/layer_0_neuron_*')
 
 
 # In[ ]:
