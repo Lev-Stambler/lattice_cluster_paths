@@ -5,9 +5,9 @@ from typing import List, Union, Dict
 import numpy as np
 import numpy.typing as npt
 import torch
-import kernel
+import src.kernel as kernel
 import src.params as paramslib
-from model import TransformerModel, forward_hooked_model, load_model
+from src.model import TransformerModel, forward_hooked_model, load_model
 import utils
 import src.visualization as visualization
 import graph
