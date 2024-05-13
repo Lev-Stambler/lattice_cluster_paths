@@ -42,7 +42,8 @@ def _per_token_score_face_paths(embd_dataset: List[npt.NDArray], path: List[grap
                 # TODO: get something like a cutoff!
                 per_node_score = local_scores if per_node_score is None else per_node_score + local_scores
 
-            rets[i:top_idx] *= (per_node_score * (per_node_score > 0) if layer == curr_layer
+            # TODO: ghetto for nowj
+            rets[i:top_idx] *= (per_node_score * (n_nonzero_on > 2 * len(path[curr_layer - layer_start][1]) / 3) if layer == curr_layer
                                 else (n_nonzero_on >= (curr_len)))
     return rets
 
@@ -51,6 +52,7 @@ def maximize_clique_signaling(clique: List[int], data_embd: npt.NDArray) -> List
     """
     Find the cutoff of of every vertex in the clique such that the cutoff maximizes the signaling that the vertex gives
     """
+
     raise NotImplementedError
 
 
