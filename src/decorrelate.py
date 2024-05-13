@@ -8,7 +8,7 @@ import torch
 import src.kernel as kernel
 import src.params as paramslib
 from src.model import TransformerModel, forward_hooked_model, load_model
-import utils
+import src.utils
 import src.visualization as visualization
 import graph
 import json
