@@ -1,8 +1,13 @@
 import networkx as nx
 import copy
-from typing import List
-from numpy import np
-from numpy.typing import npt
+from typing import List, Tuple
+import numpy as np
+import numpy.typing as npt
+
+"""
+The Clique type consists of a float (the score) and a list of vertices
+"""
+Clique = Tuple[float, List[int]]
 
 def sparsify_weighted_graph(G: nx.Graph, degree_upperbound: int):
     """ Sparsify a graph such that Deg(v) <= degree_upperbound for all v

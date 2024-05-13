@@ -8,38 +8,42 @@ import torch
 import src.kernel as kernel
 import src.params as paramslib
 from src.model import TransformerModel, forward_hooked_model, load_model
-import src.utils
+import src.utils as utils
 import src.visualization as visualization
-import graph
 import json
+import src.graph as graph
 
 from src.params import InterpParams, LatticeParams
 
 DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-def get_top_scores(self, dataset: List[str], path: List[int],
-                   layer: int, weighting_per_layer, embds=None, top_n=100):
-    model = self.model_lens
-    BOS_TOKEN = '||BOS||'
-    score_path = path
-    scores = self.score(
-        dataset,
-        layer=layer,
-        score_path=score_path,
-        weighting_per_layer=weighting_per_layer,
-        use_log_scores=True,
-        embeds=embds
-    )
 
-    scores_per_token_set = np.array([max(s) for s in scores])
-    top_args = np.argsort(scores_per_token_set)[::-1][:top_n]
-    # TODO: BOS?
-    tokens = [[BOS_TOKEN] + [model.tokenizer.decode(t) for t in model.tokenizer(d)[
-        'input_ids']] for d in dataset]
-    tokens_reord = [tokens[i] for i in top_args]
+def _per_token_score_face_paths(embd_dataset: List[npt.NDArray], path: List[graph.Clique],
+                                layer: int, layer_start=-1, BS=1_024 * 64):
 
-    scores_reord = [scores[i] for i in top_args]
-    return tokens_reord[:top_n], scores_reord[:top_n]
+    if layer_start == -1:
+        layer_start = layer
+    n_tokens = embd_dataset[0].shape[0]
+    rets = np.ones(n_tokens)
+
+    for i in range(0, n_tokens, BS):
+        top_idx = min(i+BS, n_tokens)
+        for curr_layer in range(layer_start, layer_start + len(path)):
+            per_node_score = None
+            n_nonzero_on = np.zeros(top_idx - i)
+            curr_len = len(path[curr_layer - layer_start][1])
+            for node in path[curr_layer - layer_start][1]:
+                # TODO: func out because messy
+                # multiplier = -1 if node % 2 == 1 else 1
+                # selector = node // 2
+                local_scores = kernel.feature_prob(
+                    embd_dataset[curr_layer][i:top_idx], node, keep_negative=True)
+                n_nonzero_on += (local_scores > 0)
+                per_node_score = local_scores if per_node_score is None else per_node_score + local_scores
+
+            rets[i:top_idx] *= (per_node_score * (per_node_score > 3) if layer == curr_layer
+                                else (n_nonzero_on >= (curr_len)))
+    return rets
 
 def get_layers_emb_dataset(model: TransformerModel, dataset: Dataset, layers: List[int], params: paramslib.InterpParams, use_save=True) -> List[npt.NDArray]:
     """
@@ -98,9 +102,11 @@ def get_layers_emb_dataset(model: TransformerModel, dataset: Dataset, layers: Li
     return outs_np
 
 # TODO: this is no longer log?
+
+
 def score_tokens_for_path(embd_dataset: List[npt.NDArray],
-                              path: List[int],
-                              score_weighting_per_layer: npt.NDArray, layer: int, BS=1_024*128, ignore_weights=False):
+                          path: List[int],
+                          score_weighting_per_layer: npt.NDArray, layer: int, BS=1_024*128, ignore_weights=False):
     """
         embd_dataset: The outer index corresponds to the layer, the inner index corresponds to the token
     """
@@ -203,7 +209,7 @@ class Decomposer:
 
         ds = get_dataset(params.dataset_name)
         model = load_model(params.model_name, device=device,
-                              quantization=params.quantization)
+                           quantization=params.quantization)
         self.model = model
         shuffled = ds.shuffle(seed=params.seed)[
             'train'][:params.n_datasize]['text']
@@ -261,41 +267,42 @@ class Decomposer:
             token_to_pos_original_ds) == embeds[0].shape[0]
         return embeds, token_to_original_ds, token_to_pos_original_ds
 
-    def score(self, to_score: List[str], layer: int, score_path: List[int], embeds: Union[npt.NDArray, None] = None, weighting_per_layer=None, use_log_scores=True) -> List[List[float]]:
+
+    
+    def score_face_paths(self, clique_path: List[graph.Clique], layer: int, start_layer: int = -1):
         """
             Get the scores for the tokens in the dataset
         """
-        if weighting_per_layer is None:
-            weighting_per_layer = np.ones(self.params.n_blocks)
-
-        embeds, token_to_original_ds, _ = self._get_dataset_cache(
-            to_score, embeds)
-        all_scores = score_tokens_for_path(
-            embd_dataset=embeds, path=score_path,
-            score_weighting_per_layer=weighting_per_layer, layer=layer,
-            ignore_weights=True)
+        embeds, token_to_original_ds, _ = self._get_ds_metadata(
+            self.dataset, self.ds_emb)
+        ret = _per_token_score_face_paths(
+            self.ds_emb, clique_path, layer=layer, layer_start=start_layer)
         item_to_scores = {}
 
-        # return log_scores
         # TODO: BATCHING!
-        for i in range(len(all_scores)):
+        for i in range(len(ret)):
             item = token_to_original_ds[i]
             if item not in item_to_scores:
                 item_to_scores[item] = []
-            item_to_scores[item].append(all_scores[i])
+            item_to_scores[item].append(ret[i])
         # Assuming that the scores are "dense" in how they were added, we have a list
         ks = sorted(list(item_to_scores.keys()))
         final_scores = []
         for k in ks:
             s = item_to_scores[k]
-            if not use_log_scores:
-                s = np.exp(s)
             final_scores.append(s)
-        return final_scores
 
-    def get_top_scores(self, dataset: List[str], path: List[int], layer: int, weighting_per_layer, embds=None, top_n=100):
-        return get_top_scores(self, dataset, path, layer,
-                              weighting_per_layer, embds, top_n)
+        BOS_TOKEN = '||BOS||'
+        scores_per_token_set = np.array([max(s) for s in final_scores])
+        top_args = np.argsort(scores_per_token_set)[::-1][:100]
+        # TODO: BOS?
+        tokens = [[BOS_TOKEN] + [self.model[1].decode(t) for t in self.model[1](d)[
+            'input_ids']] for d in self.dataset]
+        tokens_reord = [tokens[i] for i in top_args]
+
+        scores_reord = [final_scores[i] for i in top_args]
+        return tokens_reord, scores_reord
+
 
     def scores_for_neuron(self, layer: int, neuron: int, dataset: List[str] = None, n_features_per_neuron=None, embds=None):
         if n_features_per_neuron is None:
@@ -316,16 +323,14 @@ class Decomposer:
                     i - layer)
 
         # We always "start" from the current layer"
-        weighting_per_layer = utils.get_weighting_for_layer(
-            layer, n_blocks)
         paths = graph.get_feature_paths(self.correlation_scores, layer, neuron,
                                         k_search=self._k_search, n_max_features=n_features_per_neuron,
                                         weighting_per_edge=weighting_per_edge, all_disjoint=True)
         scores_for_path = []
         print(f"Paths for neuron {neuron}", paths)
         for i, (path, _path_score) in enumerate(paths):
-            toks, scores = self.get_top_scores(
-                dataset, path, layer, weighting_per_layer, embds)
+            toks, scores = self.score_face_paths(
+                path, layer)
             scores_for_path.append((toks, scores))
 
             # TODO: maybe save json instead?
