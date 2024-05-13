@@ -7,7 +7,7 @@ import heapq
 import numpy.typing as npt
 from sklearn.metrics import mutual_info_score
 
-    
+
 def top_k_dag_paths_dynamic(layers: List[List[List[float]]], k: int, top_layer: int = None):
     n_to_top_layer = len(layers[-1][0])
     layers = layers + [
@@ -160,10 +160,54 @@ def cosine_similarity_with_metric(a: npt.NDArray, b: npt.NDArray, metric: npt.ND
 # def get_mutual_info(A: npt.NDArray, B: npt.NDArray):
 #     mutual_info_regression(
 
+def signaling_maximization(a: npt.NDArray[1], B: npt.NDArray[2], min_bound=0.0,
+                           max_bound=50.0, max_n_iters=20, eps=1e-5, use_geometric=False) -> float:
+    """
+    Get the cutoff from a to B such that the entries in a which are above the cutoff maximize signaling in B
+    """
+    assert len(B.shape) == 2, "Expected a matrix for B"
+    assert len(a.shape) == 1, "Expected a matrix for vector for a"
+    assert a.shape[0] == B.shape[1], "Expected the same number of data points"
+    B = B > eps
+
+    n_features = B.shape[0]
+
+    def geometric(s):
+        if np.any(s == 0):
+            return 0.0
+        return np.exp(np.log(s).sum() / s.shape[-1])
+    def arithmetic(s):
+        return np.sum(s) / s.shape[-1]
+
+	# TODO: check for monotonicity
+    cutoff = min_bound
+    signaling = np.zeros((n_features))
+    
+    n_iters = 0
+    while n_iters < max_n_iters:
+        n_iters += 1
+
+        a_nonzero = (a > cutoff).nonzero()[0]
+        a_cutoff = a[a_nonzero]
+        B_cutoff = B[:, a_nonzero]
+        for i in range(n_features):
+            # We expect a_cutoff > 0 to be true for all a_cutoff
+            p_i_and_j = np.logical_and(a_cutoff > 0, B[i] > 0)
+
+            # TODO: hrmm min gives commutativity but we may not want this
+            p_i_j_min = a_cutoff.shape[-1]
+            if p_i_j_min > 0:
+                signaling[i] = p_i_and_j.sum() / p_i_j_min
+        
+        score = geometric(signaling) if use_geometric else arithmetic(signaling)
+        # TODO: Now what? How do we find opt
+
+    return signaling
+
 
 # TODO: smarter` cutoff per row. BUT QUANTIZATION!
 # TODO: this can be made wayyyy faster...
-def pairwise_signaling(A: npt.NDArray[2], B: npt.NDArray[2], cutoff_per_row=0.1):
+def pairwise_signaling(A: npt.NDArray[2], B: npt.NDArray[2], cutoff_per_row=0.005):
     """
     Pairwise **directed** signaling from A to B
     """
@@ -180,13 +224,15 @@ def pairwise_signaling(A: npt.NDArray[2], B: npt.NDArray[2], cutoff_per_row=0.1)
 
     for i in range(n_rows_A):
         for j in range(n_rows_B):
-            # Look at 
+            # Look at
             p_i_and_j = np.logical_and(A[i], B[j])
             # TODO: hrmm min gives commutativity but we may not want this
+            # TODO: THIS IS NOT COMMUTATIVE >:/
             p_i_j_min = A[i].sum()
             if p_i_j_min > 0:
                 signaling[i, j] = p_i_and_j.sum() / p_i_j_min
     return signaling
+
 
 def pairwise_pearson_coefficient_abs(A: npt.NDArray, B: npt.NDArray, eps=1e-8):
     """
@@ -221,12 +267,15 @@ def pairwise_pearson_coefficient_abs(A: npt.NDArray, B: npt.NDArray, eps=1e-8):
     # print("DIVIDING BY", np.sqrt(p4*p3[:, None]))
     pcorr = ((p1 - p2) / (np.sqrt(p4*p3[:, None]) + eps))
     # return pcorr * (pcorr > 0)
-    return np.abs(pcorr) # TODO: BETTER EXPLAIN FOR WHY ONLY POS
+    return np.abs(pcorr)  # TODO: BETTER EXPLAIN FOR WHY ONLY POS
 
 # TODO: SEP FILE
+
+
 def pairwise_correlation_metric(A: npt.NDArray, B: npt.NDArray):
     return pairwise_signaling(A, B)
     # return pairwise_mutual_information(A, B)
+
 
 def restrict_to_related_vertex(lattice: List[npt.NDArray], layer: int, idx: int) -> List[npt.NDArray]:
     bellow = [] if layer < 2 else lattice[0:layer-1]

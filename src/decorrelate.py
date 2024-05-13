@@ -39,11 +39,19 @@ def _per_token_score_face_paths(embd_dataset: List[npt.NDArray], path: List[grap
                 local_scores = kernel.feature_prob(
                     embd_dataset[curr_layer][i:top_idx], node, keep_negative=True)
                 n_nonzero_on += (local_scores > 0)
+                # TODO: get something like a cutoff!
                 per_node_score = local_scores if per_node_score is None else per_node_score + local_scores
 
-            rets[i:top_idx] *= (per_node_score * (per_node_score > 3) if layer == curr_layer
+            rets[i:top_idx] *= (per_node_score * (per_node_score > 0) if layer == curr_layer
                                 else (n_nonzero_on >= (curr_len)))
     return rets
+
+
+def maximize_clique_signaling(clique: List[int], data_embd: npt.NDArray) -> List[float]:
+    """
+    Find the cutoff of of every vertex in the clique such that the cutoff maximizes the signaling that the vertex gives
+    """
+    raise NotImplementedError
 
 
 def get_layers_emb_dataset(model: TransformerModel, dataset: Dataset, layers: List[int], params: paramslib.InterpParams, use_save=True) -> List[npt.NDArray]:
@@ -302,7 +310,7 @@ class Decomposer:
         scores_reord = [final_scores[i] for i in top_args]
         return tokens_reord, scores_reord
 
-    def scores_for_neuron(self, layer: int, neuron: int, dataset: List[str] = None, n_features_per_neuron=None, embds=None, degree_upperbound=500):
+    def scores_for_neuron(self, layer: int, neuron: int, dataset: List[str] = None, n_features_per_neuron=None, embds=None, degree_upperbound=1_000):
         if n_features_per_neuron is None:
             n_features_per_neuron = self.n_features_per_neuron
         if dataset is None:
@@ -319,6 +327,7 @@ class Decomposer:
             if len(cliques) > self.n_features_per_neuron:
                 break
         scores_for_path = []
+        print("GOT CLIQUES", cliques)
         paths = []
         # We always "start" from the current layer"
         for i, clique in enumerate(cliques):
