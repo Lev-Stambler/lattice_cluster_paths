@@ -32,7 +32,6 @@ def sparsify_weighted_graph(G: nx.Graph, degree_upperbound: int):
     return G
 
 
-
 def get_clique_score(weight_attrs, face: List[int]):
     total_weight = 1
     total_cons = 0
@@ -59,7 +58,7 @@ def get_clique_score(weight_attrs, face: List[int]):
     # return total_weight ** (1 / (total_cons))
     return total_weight / (total_cons)
 
-def graph_from_correlations(corrs: npt.NDArray):
+def graph_from_correlations(corrs: npt.NDArray) -> nx.Graph:
     assert len(corrs.shape) == 2 and corrs.shape[0] == corrs.shape[1]
     Is = np.arange(corrs.shape[0])
     corrs_mod = np.array(corrs)

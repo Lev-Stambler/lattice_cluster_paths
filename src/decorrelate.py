@@ -12,7 +12,7 @@ import src.utils as utils
 import src.visualization as visualization
 import json
 import src.graph as graph
-
+import networkx as nx
 from src.params import InterpParams, LatticeParams
 
 DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -44,6 +44,7 @@ def _per_token_score_face_paths(embd_dataset: List[npt.NDArray], path: List[grap
             rets[i:top_idx] *= (per_node_score * (per_node_score > 3) if layer == curr_layer
                                 else (n_nonzero_on >= (curr_len)))
     return rets
+
 
 def get_layers_emb_dataset(model: TransformerModel, dataset: Dataset, layers: List[int], params: paramslib.InterpParams, use_save=True) -> List[npt.NDArray]:
     """
@@ -267,13 +268,11 @@ class Decomposer:
             token_to_pos_original_ds) == embeds[0].shape[0]
         return embeds, token_to_original_ds, token_to_pos_original_ds
 
-
-    
     def score_face_paths(self, clique_path: List[graph.Clique], layer: int, start_layer: int = -1):
         """
             Get the scores for the tokens in the dataset
         """
-        embeds, token_to_original_ds, _ = self._get_ds_metadata(
+        embeds, token_to_original_ds, _ = self._get_dataset_cache(
             self.dataset, self.ds_emb)
         ret = _per_token_score_face_paths(
             self.ds_emb, clique_path, layer=layer, layer_start=start_layer)
@@ -303,34 +302,29 @@ class Decomposer:
         scores_reord = [final_scores[i] for i in top_args]
         return tokens_reord, scores_reord
 
-
-    def scores_for_neuron(self, layer: int, neuron: int, dataset: List[str] = None, n_features_per_neuron=None, embds=None):
+    def scores_for_neuron(self, layer: int, neuron: int, dataset: List[str] = None, n_features_per_neuron=None, embds=None, degree_upperbound=500):
         if n_features_per_neuron is None:
             n_features_per_neuron = self.n_features_per_neuron
         if dataset is None:
             dataset = self.dataset
             embds = self.ds_emb
 
-        n_blocks = len(self.layers)
-
-        weighting_per_edge = np.ones(n_blocks - 1)
-        for i in range(n_blocks - 1):
-            if i < layer:
-                weighting_per_edge[i] = self._weight_decay_path_sel ** (
-                    layer - i - 1)
-            else:
-                weighting_per_edge[i] = self._weight_decay_path_sel ** (
-                    i - layer)
-
-        # We always "start" from the current layer"
-        paths = graph.get_feature_paths(self.correlation_scores, layer, neuron,
-                                        k_search=self._k_search, n_max_features=n_features_per_neuron,
-                                        weighting_per_edge=weighting_per_edge, all_disjoint=True)
+        G = graph.graph_from_correlations(self.internal_correlations[layer])
+        G = graph.sparsify_weighted_graph(G, degree_upperbound)
+        weight_attrs = nx.get_edge_attributes(G, 'weight')
+        clique_iterator = nx.find_cliques(G, nodes=[neuron])
+        cliques = []
+        for c in clique_iterator:
+            cliques.append((graph.get_clique_score(weight_attrs, c), c))
+            if len(cliques) > self.n_features_per_neuron:
+                break
         scores_for_path = []
-        print(f"Paths for neuron {neuron}", paths)
-        for i, (path, _path_score) in enumerate(paths):
+        paths = []
+        # We always "start" from the current layer"
+        for i, clique in enumerate(cliques):
             toks, scores = self.score_face_paths(
-                path, layer)
+                [clique], layer)
+            paths.append([clique])
             scores_for_path.append((toks, scores))
 
             # TODO: maybe save json instead?
