@@ -43,9 +43,12 @@ def _per_token_score_face_paths(embd_dataset: List[npt.NDArray], clique: graph.C
     return rets
 
 
-def get_layers_emb_dataset(model: TransformerModel, dataset: Dataset, layers: List[int], params: paramslib.InterpParams, use_save=True) -> List[npt.NDArray]:
+def get_layers_emb_dataset(model: TransformerModel, dataset: Dataset, layers: List[int], params: paramslib.InterpParams, use_save=True, BS=None) -> List[npt.NDArray]:
     """
         Get the activations at every layer for a given dataset. We will flatten all the activations of a specific string to just get token specific activations
+
+                model - The model/ tokenizer to use
+        BS - Batch Size
     """
 
     all_finished = params.get_and_prepare_data_save_tag('all_finished_embd')
@@ -65,39 +68,44 @@ def get_layers_emb_dataset(model: TransformerModel, dataset: Dataset, layers: Li
             all_layers[i] = all_layers[i].reshape(-1, params.model_n_dims)
         return all_layers
 
-    all_outs = [[] for _ in layers]
+    _, tokenizer = model
+    total_n_toks = sum(
+        len(tokenizer.tokenize(s)) for s in dataset
+    )
+
+	# Create the layer files
+    all_outs = [np.memmap(
+        mmat_file(l), dtype='float32',
+        mode='w+', shape=(total_n_toks, params.model_n_dims))
+        for l in layers]
+
     with torch.no_grad():
-        BS = 1
+        BS = 1 if BS is None else BS
+        curr_tok_start = 0
         for t in range(0, len(dataset), BS):
             # if t % 200 == 0:
             top_idx = min(t + BS, len(dataset))
             d = dataset[t:top_idx]
             # torch.cuda.empty_cache()
             outs = forward_hooked_model(model, d)[1]
+            flattened_embeds = [outs[l].cpu().numpy().reshape(-1,
+                                    params.model_n_dims) for l in layers]
+            n_toks = flattened_embeds[0].shape[-2]
 
             for i, l in enumerate(layers):
-                tens = outs[l]
-                all_outs[i] += list(tens.cpu().numpy().reshape(-1,
-                                    params.model_n_dims))
+                tens = flattened_embeds[i]
+
+                all_outs[i][curr_tok_start:curr_tok_start + n_toks] = flattened_embeds[i]
                 del tens
-    outs_np = [
-    ]
-    for l, _ in enumerate(layers):
-        total_n_toks = len(all_outs[l])
-        mmemap_name = mmat_file(l)
-        out_np = np.memmap(mmemap_name, dtype='float32',
-                           mode='w+', shape=(total_n_toks, params.model_n_dims))
-        BS = 8
-        for i in range(0, total_n_toks, BS):
-            top_idx = min(i + BS, total_n_toks)
-            out_np[i:top_idx, :] = np.array(all_outs[l][i:top_idx])
-        outs_np.append(out_np)
+            if curr_tok_start % 1_000 > (curr_tok_start + n_toks) % 1_000:
+                print("On input ", t)
+            curr_tok_start += n_toks
     print("Finished and saving to file\n")
     if use_save:
         f = open(all_finished, 'w')
         f.write('done')
         f.close()
-    return outs_np
+    return all_outs
 
 # TODO: this is no longer log?
 
@@ -232,7 +240,6 @@ class Decomposer:
         self.layers = layers
         self.correlation_scores = None
         self.n_features_per_neuron = n_max_features_per_neuron
-        print("Got embeddings")
 
     def load(self, reload=False):
         """
@@ -242,6 +249,7 @@ class Decomposer:
         """
         self.ds_emb = get_layers_emb_dataset(
             self.model, self.dataset, self.layers, params=self.params, use_save=not reload)
+        print("Got embeddings")
         self.internal_correlations = correlate_internal_layer(
             self.ds_emb, params=self.params, use_saved=not reload
         )
