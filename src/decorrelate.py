@@ -34,12 +34,12 @@ def _per_token_score_face_paths(embd_dataset: List[npt.NDArray], clique: graph.C
 
         local_scores_per_node = kernel.feature_prob_on_many(embd_dataset[layer][i:top_idx],
                                                             clique[1], keep_negative=True)
-        print("TDOODO del me", local_scores_per_node.shape)
         n_above_thresh_on = (local_scores_per_node > thresh).sum(axis=-1)
         scores = np.sum(local_scores_per_node, axis=-1)
 
         # TODO: HRMMMMMMM WHAT THRESHOLD?
-        rets[i:top_idx] = (n_above_thresh_on > len(clique[1]) // 2) * scores
+        # rets[i:top_idx] = (n_above_thresh_on > len(clique[1]) // 2) * scores
+        rets[i:top_idx] = n_above_thresh_on
     return rets
 
 

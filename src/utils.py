@@ -173,7 +173,7 @@ def cosine_similarity_with_metric(a: npt.NDArray, b: npt.NDArray, metric: npt.ND
 #     mutual_info_regression(
 
 def signaling_maximization(a: npt.NDArray[1], B: npt.NDArray[2],
-                           max_bound=10.0, max_n_iters=20, eps=1e-5, use_geometric=False) -> float:
+                           max_bound=2.0, eps=1e-5, use_geometric=False) -> float:
     """
     Get the cutoff from a to B such that the entries in a which are above the cutoff maximize signaling in B
     """

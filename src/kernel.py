@@ -61,9 +61,6 @@ def feature_prob_on_many(x: npt.NDArray, features: List[int], keep_negative=Fals
     f = np.array(features)
     # Have every f%2 = 1 be a -1 mult and otherwise a 1 mult
     mults = (-1 * np.ones(f.shape[0])) ** (f % 2 == 1)
-    print("AAA", mults)
-    # mult = 1 if f % 2 == 0 else -1
-    # x is (bs, d)
     multed = x[:, f // 2] * mults
     if keep_negative:
         return multed
