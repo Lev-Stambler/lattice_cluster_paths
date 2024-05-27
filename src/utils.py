@@ -195,7 +195,7 @@ def signaling_maximization(a: npt.NDArray[1], B: npt.NDArray[2],
     max_score = -1
     maximizing_cutoff = 0.0
 
-    inner_int_steps = 10
+    inner_int_steps = 5
 
     for v in range(0, int(max_bound) * inner_int_steps + 1):
         cutoff = v / inner_int_steps

@@ -1,3 +1,4 @@
+from typing import List
 import numpy.typing as npt
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
@@ -54,6 +55,20 @@ def _make_kernel_feat(n_dims: int):
     # assert x.shape[2] == features.shape[2]
     _kernel_feat = features
     return features
+
+
+def feature_prob_on_many(x: npt.NDArray, features: List[int], keep_negative=False):
+    f = np.array(features)
+    # Have every f%2 = 1 be a -1 mult and otherwise a 1 mult
+    mults = (-1 * np.ones(f.shape[0])) ** (f % 2 == 1)
+    print("AAA", mults)
+    # mult = 1 if f % 2 == 0 else -1
+    # x is (bs, d)
+    multed = x[:, f // 2] * mults
+    if keep_negative:
+        return multed
+    
+    return multed * (multed > 0)
 
 # TODO: WE CAN MAKE THIS EVEN FASTER BY JUST USING NUMPY BASED SEL TECHs
 def feature_prob(x: npt.NDArray, feature_idx: int, kernel_width=0.01, keep_negative=False):

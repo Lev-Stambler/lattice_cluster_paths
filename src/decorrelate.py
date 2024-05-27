@@ -18,34 +18,30 @@ from src.params import InterpParams, LatticeParams
 DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
-def _per_token_score_face_paths(embd_dataset: List[npt.NDArray], path: List[graph.Clique],
-                                layer: int, layer_start=-1, BS=1_024 * 64):
+def _per_token_score_face_paths(embd_dataset: List[npt.NDArray], clique: graph.Clique,
+                                node_in_clique_threshold: List[float],
+                                layer: int, BS=1_024 * 64):
 
-    if layer_start == -1:
-        layer_start = layer
     n_tokens = embd_dataset[0].shape[0]
     rets = np.ones(n_tokens)
 
+    thresh = np.expand_dims(node_in_clique_threshold, 0)
     for i in range(0, n_tokens, BS):
         top_idx = min(i+BS, n_tokens)
-        for curr_layer in range(layer_start, layer_start + len(path)):
-            per_node_score = None
-            n_nonzero_on = np.zeros(top_idx - i)
-            curr_len = len(path[curr_layer - layer_start][1])
-            for node in path[curr_layer - layer_start][1]:
-                # TODO: func out because messy
-                # multiplier = -1 if node % 2 == 1 else 1
-                # selector = node // 2
-                local_scores = kernel.feature_prob(
-                    embd_dataset[curr_layer][i:top_idx], node, keep_negative=True)
-                n_nonzero_on += (local_scores > 0)
-                # TODO: get something like a cutoff!
-                per_node_score = local_scores if per_node_score is None else per_node_score + local_scores
+        per_node_score = None
+        n_above_thresh_on = np.zeros(top_idx - i)
+        curr_len = len(clique[1])
 
-            # TODO: ghetto for nowj
-            rets[i:top_idx] *= (per_node_score * (n_nonzero_on > len(path[curr_layer - layer_start][1]) / 3) if layer == curr_layer
-                                else (n_nonzero_on >= (curr_len)))
+        local_scores_per_node = kernel.feature_prob_on_many(embd_dataset[layer][i:top_idx],
+                                                            clique[1], keep_negative=True)
+        print("TDOODO del me", local_scores_per_node.shape)
+        n_above_thresh_on = (local_scores_per_node > thresh).sum(axis=-1)
+        scores = np.sum(local_scores_per_node, axis=-1)
+
+        # TODO: HRMMMMMMM WHAT THRESHOLD?
+        rets[i:top_idx] = (n_above_thresh_on > len(clique[1]) // 2) * scores
     return rets
+
 
 def get_layers_emb_dataset(model: TransformerModel, dataset: Dataset, layers: List[int], params: paramslib.InterpParams, use_save=True) -> List[npt.NDArray]:
     """
@@ -283,29 +279,25 @@ class Decomposer:
         embeds = embeds[layer]
         # TODO: I think that this should be cached
         embeds = utils.separate_neg_pos(embeds)
-        print("AAHAHA", embeds.shape)
         clique_idxs = clique[1]
         maximizers = []
         for node in clique_idxs:
             a = embeds[:, node]
             B = embeds[:, clique_idxs]
             B = B.T
-            print("FFFF", B.shape)
             maximizers.append(utils.signaling_maximization(a, B))
         return maximizers
 
-        # 
-        raise NotImplementedError
-        pass
-
-    def score_face_paths(self, clique_path: List[graph.Clique], layer: int, start_layer: int = -1):
+    def score_face_paths(self, clique: graph.Clique, layer: int):
         """
             Get the scores for the tokens in the dataset
         """
         embeds, token_to_original_ds, _ = self._get_dataset_cache(
             self.dataset, self.ds_emb)
+        node_in_clique_thresh = self.tune_clique(clique, layer)
+        print("Got tuned clique", node_in_clique_thresh)
         ret = _per_token_score_face_paths(
-            self.ds_emb, clique_path, layer=layer, layer_start=start_layer)
+            self.ds_emb, clique, node_in_clique_thresh, layer=layer)
         item_to_scores = {}
 
         # TODO: BATCHING!
@@ -332,7 +324,7 @@ class Decomposer:
         scores_reord = [final_scores[i] for i in top_args]
         return tokens_reord, scores_reord
 
-    def scores_for_neuron(self, layer: int, neuron: int, dataset: List[str] = None, n_features_per_neuron=None, embds=None, degree_upperbound=1_000):
+    def scores_for_neuron(self, layer: int, neuron: int, dataset: List[str] = None, n_features_per_neuron=None, degree_upperbound=1_000):
         if n_features_per_neuron is None:
             n_features_per_neuron = self.n_features_per_neuron
         if dataset is None:
@@ -354,7 +346,7 @@ class Decomposer:
         # We always "start" from the current layer"
         for i, clique in enumerate(cliques):
             toks, scores = self.score_face_paths(
-                [clique], layer)
+                clique, layer)
             paths.append([clique])
             scores_for_path.append((toks, scores))
 
