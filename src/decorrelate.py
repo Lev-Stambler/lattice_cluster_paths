@@ -43,18 +43,9 @@ def _per_token_score_face_paths(embd_dataset: List[npt.NDArray], path: List[grap
                 per_node_score = local_scores if per_node_score is None else per_node_score + local_scores
 
             # TODO: ghetto for nowj
-            rets[i:top_idx] *= (per_node_score * (n_nonzero_on > 2 * len(path[curr_layer - layer_start][1]) / 3) if layer == curr_layer
+            rets[i:top_idx] *= (per_node_score * (n_nonzero_on > len(path[curr_layer - layer_start][1]) / 3) if layer == curr_layer
                                 else (n_nonzero_on >= (curr_len)))
     return rets
-
-
-def maximize_clique_signaling(clique: List[int], data_embd: npt.NDArray) -> List[float]:
-    """
-    Find the cutoff of of every vertex in the clique such that the cutoff maximizes the signaling that the vertex gives
-    """
-
-    raise NotImplementedError
-
 
 def get_layers_emb_dataset(model: TransformerModel, dataset: Dataset, layers: List[int], params: paramslib.InterpParams, use_save=True) -> List[npt.NDArray]:
     """
@@ -225,6 +216,9 @@ class Decomposer:
         shuffled = ds.shuffle(seed=params.seed)[
             'train'][:params.n_datasize]['text']
         dataset = shuffled
+        # We count the activations *prior* to the first block (embeddings)
+        # as being a "layer" and so have n_blocks + 1 embeddings
+        # TODO: change back w/ later fix
         layers = [i for i in range(params.n_blocks)]
         self.params = params
         print(
@@ -278,6 +272,32 @@ class Decomposer:
             token_to_pos_original_ds) == embeds[0].shape[0]
         return embeds, token_to_original_ds, token_to_pos_original_ds
 
+    def tune_clique(self, clique: graph.Clique, layer: int) -> List[float]:
+        """
+            Given a clique, we will "tune" the activation parameters to maximize mutual signaling
+
+            `returns` floats for each node in the clique corresponding to a minimum activation
+        """
+        embeds, _, _ = self._get_dataset_cache(
+            self.dataset, self.ds_emb)
+        embeds = embeds[layer]
+        # TODO: I think that this should be cached
+        embeds = utils.separate_neg_pos(embeds)
+        print("AAHAHA", embeds.shape)
+        clique_idxs = clique[1]
+        maximizers = []
+        for node in clique_idxs:
+            a = embeds[:, node]
+            B = embeds[:, clique_idxs]
+            B = B.T
+            print("FFFF", B.shape)
+            maximizers.append(utils.signaling_maximization(a, B))
+        return maximizers
+
+        # 
+        raise NotImplementedError
+        pass
+
     def score_face_paths(self, clique_path: List[graph.Clique], layer: int, start_layer: int = -1):
         """
             Get the scores for the tokens in the dataset
@@ -329,7 +349,7 @@ class Decomposer:
             if len(cliques) > self.n_features_per_neuron:
                 break
         scores_for_path = []
-        print("GOT CLIQUES", cliques)
+        print("GOT CLIQUES WITH LENGTH", [len(c[1]) for c in cliques], cliques)
         paths = []
         # We always "start" from the current layer"
         for i, clique in enumerate(cliques):

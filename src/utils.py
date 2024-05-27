@@ -7,6 +7,18 @@ import heapq
 import numpy.typing as npt
 from sklearn.metrics import mutual_info_score
 
+def separate_neg_pos(embeds: npt.NDArray):
+    """
+    Go from an embedding of [n_data, embed dim] --> [n_data, 2 * embed_dim]
+    where negative and positive are separated out
+    """
+    result = np.repeat(embeds, 2, axis=-1)
+    indices = np.arange(result.shape[-1])
+    indices_pos = np.nonzero(indices % 2 == 0)[0]
+    indices_neg = np.nonzero(indices % 2 == 1)[0]
+    result[indices_pos] = (result[indices_pos] > 0) * result[indices_pos]
+    result[indices_neg] = (result[indices_neg] < 0) * result[indices_pos]
+    return result
 
 def top_k_dag_paths_dynamic(layers: List[List[List[float]]], k: int, top_layer: int = None):
     n_to_top_layer = len(layers[-1][0])
@@ -160,8 +172,8 @@ def cosine_similarity_with_metric(a: npt.NDArray, b: npt.NDArray, metric: npt.ND
 # def get_mutual_info(A: npt.NDArray, B: npt.NDArray):
 #     mutual_info_regression(
 
-def signaling_maximization(a: npt.NDArray[1], B: npt.NDArray[2], min_bound=0.0,
-                           max_bound=50.0, max_n_iters=20, eps=1e-5, use_geometric=False) -> float:
+def signaling_maximization(a: npt.NDArray[1], B: npt.NDArray[2],
+                           max_bound=10.0, max_n_iters=20, eps=1e-5, use_geometric=False) -> float:
     """
     Get the cutoff from a to B such that the entries in a which are above the cutoff maximize signaling in B
     """
@@ -179,30 +191,34 @@ def signaling_maximization(a: npt.NDArray[1], B: npt.NDArray[2], min_bound=0.0,
     def arithmetic(s):
         return np.sum(s) / s.shape[-1]
 
-	# TODO: check for monotonicity
-    cutoff = min_bound
-    signaling = np.zeros((n_features))
     
-    n_iters = 0
-    while n_iters < max_n_iters:
-        n_iters += 1
+    max_score = -1
+    maximizing_cutoff = 0.0
 
-        a_nonzero = (a > cutoff).nonzero()[0]
+    inner_int_steps = 10
+
+    for v in range(0, int(max_bound) * inner_int_steps + 1):
+        cutoff = v / inner_int_steps
+
+        signaling = np.zeros((n_features))
+        anz = a > cutoff
+        a_nonzero = anz.nonzero()[0]
         a_cutoff = a[a_nonzero]
-        B_cutoff = B[:, a_nonzero]
         for i in range(n_features):
             # We expect a_cutoff > 0 to be true for all a_cutoff
-            p_i_and_j = np.logical_and(a_cutoff > 0, B[i] > 0)
+            p_i_and_j = np.logical_and(a_cutoff > 0, B[i, a_nonzero] > 0)
 
             # TODO: hrmm min gives commutativity but we may not want this
-            p_i_j_min = a_cutoff.shape[-1]
-            if p_i_j_min > 0:
-                signaling[i] = p_i_and_j.sum() / p_i_j_min
+            p_j = a_cutoff.shape[-1]
+            if p_j > 0:
+                signaling[i] = p_i_and_j.sum() / p_j
         
         score = geometric(signaling) if use_geometric else arithmetic(signaling)
-        # TODO: Now what? How do we find opt
+        if score > max_score:
+            max_score = score
+            maximizing_cutoff = cutoff
 
-    return signaling
+    return maximizing_cutoff
 
 
 # TODO: smarter` cutoff per row. BUT QUANTIZATION!
