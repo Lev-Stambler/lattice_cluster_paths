@@ -35,11 +35,12 @@ def _per_token_score_face_paths(embd_dataset: List[npt.NDArray], clique: graph.C
         local_scores_per_node = kernel.feature_prob_on_many(embd_dataset[layer][i:top_idx],
                                                             clique[1], keep_negative=True)
         n_above_thresh_on = (local_scores_per_node > thresh).sum(axis=-1)
-        scores = np.sum(local_scores_per_node, axis=-1)
+        scores = np.sum(local_scores_per_node - thresh, axis=-1)
 
         # TODO: HRMMMMMMM WHAT THRESHOLD?
         # rets[i:top_idx] = (n_above_thresh_on > len(clique[1]) // 2) * scores
-        rets[i:top_idx] = n_above_thresh_on
+        # rets[i:top_idx] = n_above_thresh_on
+        rets[i:top_idx] = (scores) * (scores > 0)
     return rets
 
 
@@ -97,8 +98,8 @@ def get_layers_emb_dataset(model: TransformerModel, dataset: Dataset, layers: Li
 
                 all_outs[i][curr_tok_start:curr_tok_start + n_toks] = flattened_embeds[i]
                 del tens
-            if curr_tok_start % 1_000 > (curr_tok_start + n_toks) % 1_000:
-                print("On input ", t)
+            # if curr_tok_start % 1_000 > (curr_tok_start + n_toks) % 1_000:
+            #     print("On input ", t)
             curr_tok_start += n_toks
     print("Finished and saving to file\n")
     if use_save:
@@ -346,7 +347,7 @@ class Decomposer:
         cliques = []
         for c in clique_iterator:
             cliques.append((graph.get_clique_score(weight_attrs, c), c))
-            if len(cliques) > self.n_features_per_neuron:
+            if len(cliques) >= n_features_per_neuron:
                 break
         scores_for_path = []
         print("GOT CLIQUES WITH LENGTH", [len(c[1]) for c in cliques], cliques)

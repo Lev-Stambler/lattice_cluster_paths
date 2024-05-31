@@ -2,6 +2,7 @@ import torch
 from typing import Callable, List, Tuple
 from transformers import BitsAndBytesConfig, AutoModelForCausalLM, AutoTokenizer
 from torch.cuda.amp import autocast
+from src.config import PRE_RESIDUAL_ADDITION_KEY
 
 
 TransformerModel = Tuple[AutoModelForCausalLM, AutoTokenizer]
@@ -38,5 +39,6 @@ def forward_hooked_model(model: TransformerModel, inp: List[str]) -> Tuple[torch
     model, tokenizer = model
     with torch.no_grad():
         inps = tokenizer(inp, return_tensors='pt').to(model.device)
-        r = model.forward(**inps, output_hidden_states=True)
-        return r['logits'], r['hidden_states']
+        r = model.forward(**inps, output_hidden_states=True, use_cache=True)
+        
+        return r['logits'], r[PRE_RESIDUAL_ADDITION_KEY]

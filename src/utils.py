@@ -173,7 +173,7 @@ def cosine_similarity_with_metric(a: npt.NDArray, b: npt.NDArray, metric: npt.ND
 #     mutual_info_regression(
 
 def signaling_maximization(a: npt.NDArray[1], B: npt.NDArray[2],
-                           max_bound=2.0, eps=1e-5, use_geometric=False) -> float:
+                           max_bound=1.0, eps=1e-5, use_geometric=False) -> float:
     """
     Get the cutoff from a to B such that the entries in a which are above the cutoff maximize signaling in B
     """
@@ -223,30 +223,41 @@ def signaling_maximization(a: npt.NDArray[1], B: npt.NDArray[2],
 
 # TODO: smarter` cutoff per row. BUT QUANTIZATION!
 # TODO: this can be made wayyyy faster...
-def pairwise_signaling(A: npt.NDArray[2], B: npt.NDArray[2], cutoff_per_row=0.005):
+def pairwise_signaling(A: npt.NDArray[2], B: npt.NDArray[2], cutoff_per_row=0.005, BS=100_000):
     """
     Pairwise **directed** signaling from A to B
     """
-    print(A.shape, B.shape)
+    print("Starting pairwise signaling calculations", A.shape, B.shape)
     assert len(B.shape) == len(A.shape) == 2, "Expected a matrix"
     assert A.shape[1] == B.shape[1], "Expected the same number of samples"
     A = A > cutoff_per_row
     B = B > cutoff_per_row
     n_rows_A = A.shape[0]
     n_rows_B = B.shape[0]
+    n_items = A.shape[1]
     signaling = np.zeros((n_rows_A, n_rows_B))
     # n_items = A.shape[1]
     # prob_row = signaling.sum(axis=-1) / n_items
 
+	# TODO: WHAT IS THIS GIVING DIRECTED GRAPH?>???? Hrmrmrmrm
+    # i is the source of the edge directed to j
+    # we want the probability of Node j being on given that Node i is on
+    # 
     for i in range(n_rows_A):
         for j in range(n_rows_B):
-            # Look at
-            p_i_and_j = np.logical_and(A[i], B[j])
+            print("On pairs", i, j)
+            p_i = 0.0
+            p_j = 0.0
+            p_i_and_j_total = 0.0
+            for t in range(0, n_items, BS):
+                top = min(n_items, t + BS)
+                p_i_and_j_total += np.logical_and(A[i, t:top], B[j, t:top]).sum()
+                p_i += A[i, t:top].sum()
+                p_j += B[j, t:top].sum()
+            # TODO: batch size
             # TODO: hrmm min gives commutativity but we may not want this
-            # TODO: THIS IS NOT COMMUTATIVE >:/
-            p_i_j_min = A[i].sum()
-            if p_i_j_min > 0:
-                signaling[i, j] = p_i_and_j.sum() / p_i_j_min
+            if p_i > 0:
+                signaling[i, j] = p_i_and_j_total / p_i
     return signaling
 
 
