@@ -7,7 +7,7 @@ import numpy.typing as npt
 import torch
 import kernel
 import metadata as paramslib
-from model import TransformerModel, forward_hooked_model, load_model
+from model import TransformerModel, forward_hooked_model_preresids_and_hidden, load_model
 import utils
 import visualization
 import graph
@@ -52,21 +52,29 @@ def get_layers_emb_dataset(model: TransformerModel, dataset: Dataset, layers: Li
     all_finished = params.get_and_prepare_data_save_tag('all_finished_embd')
 
     def mmat_file(layer: int):
-        return params.get_and_prepare_data_save_tag(f'mmat_t_layer_total_{layer}.dat') \
-            if use_save else f'/tmp/mmat_t_layer_total_{layer}.dat'
+        return (params.get_and_prepare_data_save_tag(f'mmat_t_layer_preresid_{layer}.dat'), params.get_and_prepare_data_save_tag(f'mmat_t_layer_hidden_{layer}.dat'))\
+            if use_save else (f'/tmp/mmat_t_layer_preresid_{layer}.dat', f'/tmp/mmat_t_layer_hidden_{layer}.dat')
     if use_save and os.path.exists(all_finished):
         print("Loading dataset from cache")
-        all_layers = []
+        all_layers_presid = []
+        all_layers_hidden = []
         for i, _ in enumerate(layers):
-            all_layers.append(
-                np.memmap(mmat_file(i), dtype='float32', mode='r'))
+            all_layers_presid.append(
+                np.memmap(mmat_file(i)[0], dtype='float32', mode='r'))
+            all_layers_hidden.append(
+                np.memmap(mmat_file(i)[1], dtype='float32', mode='r'))
         # We don't store the shape, so we need to reshape to the original shape
         # TODO: maybe store the shape instead?
-        for i in range(len(all_layers)):
-            all_layers[i] = all_layers[i].reshape(-1, params.model_n_dims)
-        return all_layers
+        for i in range(len(all_layers_presid)):
+            all_layers_presid[i] = all_layers_presid[i].reshape(
+                -1, params.model_n_dims)
+            all_layers_hidden[i] = all_layers_hidden[i].reshape(
+                -1, params.model_n_dims)
+        return all_layers_presid, all_layers_hidden
 
-    all_outs = [[] for _ in layers]
+    _, tokenizer = model
+
+    all_outs = [[[], []] for _ in layers]
     with torch.no_grad():
         BS = 1
         for t in range(0, len(dataset), BS):
@@ -75,35 +83,58 @@ def get_layers_emb_dataset(model: TransformerModel, dataset: Dataset, layers: Li
             top_idx = min(t + BS, len(dataset))
             d = dataset[t:top_idx]
             # torch.cuda.empty_cache()
-            outs = forward_hooked_model(model, d)[1]
+            # outs = forward_hooked_model_preresids(model, d)
+            preresides, hidden = forward_hooked_model_preresids_and_hidden(
+                model, d)
 
             for i, l in enumerate(layers):
-                tens = outs[l]
-                all_outs[i] += list(tens.cpu().numpy().reshape(-1,
-                                    params.model_n_dims))
+                tens = preresides[l]
+                # TODO: this is stupid
+                all_outs[i][0] += list(tens.cpu().numpy().reshape(-1,
+                                                                  params.model_n_dims))
                 del tens
-    outs_np = [
+    outs_np_preresid = [
     ]
+    outs_np_hidden = [
+    ]
+
+    total_n_toks = sum([tokenizer(inp, return_tensors='pt')[
+                       'input_ids'].shape[-1] for inp in dataset])
     for l, _ in enumerate(layers):
-        total_n_toks = len(all_outs[l])
-        mmemap_name = mmat_file(l)
-        out_np = np.memmap(mmemap_name, dtype='float32',
-                           mode='w+', shape=(total_n_toks, params.model_n_dims))
-        # BS = 1_024 * 8
-        BS = 8
-        for i in range(0, total_n_toks, BS):
-            # if i % 200 == 0:
-            #     print("Numpy ON", i)
-            top_idx = min(i + BS, total_n_toks)
-            # print("ON", i, top_idx, all_outs[l][i:top_idx])
-            out_np[i:top_idx, :] = np.array(all_outs[l][i:top_idx])
-        outs_np.append(out_np)
-    print("Finished and saving to file\n")
+        mmemap_name_preresid, mmemap_name_hidden = mmat_file(l)
+        outs_np_preresid.append(np.memmap(mmemap_name_preresid, dtype='float32',
+                                          mode='w+', shape=(total_n_toks, params.model_n_dims)))
+        outs_np_hidden.append(np.memmap(mmemap_name_hidden, dtype='float32',
+                                 mode='w+', shape=(total_n_toks, params.model_n_dims)))
+
+    with torch.no_grad():
+        BS = 1
+        curr_idx = 0
+        for t in range(0, len(dataset), BS):
+            # if t % 200 == 0:
+            # print("ON", t)
+            top_idx = min(t + BS, len(dataset))
+            d = dataset[t:top_idx]
+            # torch.cuda.empty_cache()
+            # outs = forward_hooked_model_preresids(model, d)
+            preresids, hidden = forward_hooked_model_preresids_and_hidden(
+                model, d)
+
+            for i, l in enumerate(layers):
+                # TODO: this is stupid
+                p = preresids[l].cpu().numpy().reshape(-1,
+                                                       params.model_n_dims)
+                h = hidden[l].cpu().numpy().reshape(-1,
+                                                    params.model_n_dims)
+                outs_np_preresid[i][curr_idx: curr_idx + p.shape[0]] = p
+                outs_np_hidden[i][curr_idx: curr_idx + p.shape[0]] = h
+                if i == len(layers) - 1:
+                    curr_idx += p.shape[0]
     if use_save:
         f = open(all_finished, 'w')
         f.write('done')
         f.close()
-    return outs_np
+    return outs_np_preresid, outs_np_hidden
 
 
 def cluster_model_lattice(ds: List[npt.NDArray], params: paramslib.InterpParams) -> List[List[List[float]]]:
@@ -145,7 +176,7 @@ def cluster_model_lattice(ds: List[npt.NDArray], params: paramslib.InterpParams)
 
     def score_cluster_to_next(curr_layer_idx: int, next_layer_idx: int) -> List[float]:
         coeffs = utils.pairwise_correlation_metric(
-            probs_for_all_layers[curr_layer_idx], probs_for_all_layers[next_layer_idx])
+            probs_for_all_layers[curr_layer_idx], probs_for_all_layers[next_layer_idx], commutative=False)
         print("COEFF STUFF", probs_for_all_layers[curr_layer_idx].max(), probs_for_all_layers[curr_layer_idx].min(),
               coeffs.shape, coeffs.min(), coeffs.max())
         return coeffs
@@ -282,7 +313,7 @@ class Decomposer:
 
         ds = get_dataset(params.dataset_name)
         model = load_model(params.model_name, device=device,
-                              quantization=params.quantization)
+                           quantization=params.quantization)
         self.model = model
         shuffled = ds.shuffle(seed=params.seed)[
             'train'][:params.n_datasize]['text']
@@ -303,21 +334,22 @@ class Decomposer:
         print("Created dataset")
         self.layers = layers
         self.correlation_scores = None
-        self.ds_emb = get_layers_emb_dataset(
-            self.model, self.dataset, self.layers, params=self.params, use_save=True)
         self.n_features_per_neuron = n_max_features_per_neuron
-        print("Got embeddings")
 
-    def load(self):
+    def load(self, skip_internal_corr=False):
+        self.ds_emb, self.hidden_emb = get_layers_emb_dataset(
+            self.model, self.dataset, self.layers, params=self.params, use_save=True)
+        print("Got embeddings")
         self.correlation_scores = cluster_model_lattice(
             self.ds_emb, params=self.params)
-        self.internal_correlations = correlate_internal_to_layer(
-            self.ds_emb, params=self.params
-        )
+        if not skip_internal_corr:
+            self.internal_correlations = correlate_internal_to_layer(
+                self.ds_emb, params=self.params
+            )
 
-    def _get_ds_metadata(self, ds: List[str], embeds: npt.NDArray = None):
-        if embeds is None:
-            embeds = get_layers_emb_dataset(
+    def _get_ds_metadata(self, ds: List[str], preresid: npt.NDArray = None):
+        if preresid is None:
+            preresid, hidden_emb = get_layers_emb_dataset(
                 self.model, ds, self.layers, params=self.params, use_save=False)
         token_to_original_ds = []
         token_to_pos_original_ds = []
@@ -331,8 +363,8 @@ class Decomposer:
                 token_to_pos_original_ds.append(j)
 
         assert len(token_to_original_ds) == len(
-            token_to_pos_original_ds) == embeds[0].shape[0]
-        return embeds, token_to_original_ds, token_to_pos_original_ds
+            token_to_pos_original_ds) == preresid[0].shape[0]
+        return preresid, token_to_original_ds, token_to_pos_original_ds
 
     def score(self, to_score: List[str], layer: int, score_path: List[int], embeds: Union[npt.NDArray, None] = None, weighting_per_layer=None, use_log_scores=True) -> List[List[float]]:
         """

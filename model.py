@@ -38,5 +38,20 @@ def forward_hooked_model(model: TransformerModel, inp: List[str]) -> Tuple[torch
     model, tokenizer = model
     with torch.no_grad():
         inps = tokenizer(inp, return_tensors='pt').to(model.device)
-        r = model.forward(**inps, output_hidden_states=True)
-        return r['logits'], r['hidden_states']
+        r = model.forward(**inps, output_hidden_states=True, use_cache=True)
+        return r['logits'], r['hidden_states'], r['past_key_values']
+
+def forward_hooked_model_preresids(model: TransformerModel, inp: List[str]) -> Tuple[torch.tensor, List[torch.tensor]]:
+    model, tokenizer = model
+    with torch.no_grad():
+        inps = tokenizer(inp, return_tensors='pt').to(model.device)
+        r = model.forward(**inps, output_hidden_states=True, use_cache=True)
+        return r['past_key_values']
+
+
+def forward_hooked_model_preresids_and_hidden(model: TransformerModel, inp: List[str]) -> Tuple[torch.tensor, List[torch.tensor]]:
+    model, tokenizer = model
+    with torch.no_grad():
+        inps = tokenizer(inp, return_tensors='pt').to(model.device)
+        r = model.forward(**inps, output_hidden_states=True, use_cache=True)
+        return r['hidden_states'], r['past_key_values']
